@@ -1,0 +1,1021 @@
+\documentclass[%
+	11pt,
+	a4paper,
+	utf8,
+	%twocolumn
+		]{article}	
+
+\usepackage{style_packages/podvoyskiy_article_extended}
+
+
+\begin{document}
+\title{Базовый курс Spark в реализациях на Scala и Python}
+
+\author{}
+
+\date{}
+\maketitle
+
+\thispagestyle{fancy}
+
+\tableofcontents
+
+
+\section{Общие сведения}
+
+\texttt{Apache Spark} -- это универсальная и высокопроизводительная кластерная вычислительная платформа \cite{carey:spark-2015}. Благодаря разнопрофильным инструментам для аналитической обработки данных, \texttt{Apache Spark} активно используется в системах интернета вещей на стороне IoT-платформы, а также в различных бизнес-приложениях, в т.ч. на базе методов машинного обучения.
+
+\texttt{Apache Spark} позиционируется как средство потоковой обработки больших данных в реальном времени. Однако, это не совсем так: в отличие, например, от \texttt{Apache Kafka} или \texttt{Apache Storm}, фреймворк \texttt{Apache Spark} разбивает непрерывный поток данных на набор \emph{микро-пакетов}. Поэтому возможны некотрые временные задержки порядка секунды. Официальная документация утверждает, что это не оказывает большого влияния на приложения, поскольку в большинстве случаев аналитика больших данных выполняется не непрерывно, а с довольно большим шагом около пары минут. 
+
+Однако, если все же временная задержка обработки данных (latency) -- это критичный момент для приложения, то \texttt{Apache Spark Streaming} не подойдет и стоит рассмотреть альтернативу в виде \texttt{Apache Kafka Streams}\footnote{Apache Kafka Streams -- это клиентская библиотека для разработки \emph{распределенных потоковых приложений} и \emph{микросервисов}, в которых входные и выходные данные хранятся в кластерах Kafka. Поддерживает только Java и Scala} (задержка не более 1 миллисекунды) или \emph{фреймворков потоковой обработки больших данных} \texttt{Apache Storm}, \texttt{Apache Flink} и \href{https://samza.apache.org/}{\ttfamily Apache Samza}.
+
+В отличие от классического MapReduce\footnote{Модель распределенных вычислений}, реализованном в \texttt{Apache Hadoop}, \texttt{Spark} не записывает промежуточные данные на диск, а размещает их в оперативной памяти. Поэтому сервера, на которых развернут \texttt{Spark}, требуют большого объема оперативной памяти. Это в свою очередь ведет к удорожанию кластера. 
+
+\texttt{Spark} вращается вокруг концепции \emph{устойчивого распределенного набора данных} (Resilient Distributed Dataset, {RDD}) \url{https://spark.apache.org/docs/latest/rdd-programming-guide.html}, который представляет собой отказоустойчивый набор элементов, с которыми можно работать \emph{параллельно}.
+
+Существует два способа создать RDD:
+
+\begin{itemize}
+	\item распараллеливание существующего набора данных,
+	
+	\item на основе набора данных внешней системы хранения, такой как общая файловая система, HDFS, HBase или на основании любого другого источника, который поддерживает Hadoop.
+\end{itemize}
+
+Модуль \href{https://spark.apache.org/docs/latest/api/python/pyspark.sql.html?highlight=read%20csv}{\texttt{pyspark.sql.SparkSession}} является базовой <<точкой входа>> для работы с \texttt{DataFrame} и \texttt{SQL}. Класс \texttt{SparkSession} может использоваться для работы с объектом \texttt{DataFrame}, регистрации его как таблицы, выполнения \texttt{SQL}-запросов, кеширования таблиц и чтения \texttt{parquet}-файлов:
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: from pyspark.conf import SparkConf
+In[]: from pyspark.sql import SparkSession
+
+In[]: spark = (
+          SparkSession.
+          builder.  # создать экземпляр класса SparkSession
+          master('local[4]').   # задает URL-адрес
+                                # в данном случае подключается локально и использует 4 ядра
+          appName('test app').  # задать наименование приложения
+          config(conf=SparkConf()).  # задать конфигурацию
+          getOrCreate()  # возвращает существующий сеанс Spark или, если его нет, создает
+                         # новый сеанс на основе параметров, заданных в builder
+      )
+\end{lstlisting}
+
+\section{Начало работы со Spark}
+
+Отправной точкой является \texttt{SparkSession} -- создание распределенной системы для исполнения будущих вычислений
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import org.apache.spark.sql.SparkSession
+import spark.implicits._  // важный импорт; здесь много синтаксического сахара
+val spark = SparkSession.builder()
+    .appName("Example app")
+    .master("local[*]")
+    .getOrCreate()
+\end{lstlisting}
+
+Метод \texttt{.master(...)} (или \texttt{.setMaster(...)} в конфигурации \texttt{SparkContext}) указывает, где нужно выполнить вычисления. Например,
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+.master("yarn")  // выполнение на кластере Hadoop
+.master("local")  // выполнение локально на машине
+\end{lstlisting}
+
+У \texttt{Spark} есть 3 разных API:
+\begin{itemize}
+	\item RDD API,
+	
+	\item DataFrame API (он же SQL API),
+	
+	\item DataSet API (только для \texttt{Scala}).
+\end{itemize}
+
+Различаются они в основном тем, в каком виде представлены \emph{распределенные коллекции} при вычислениях. На низком уровне все эти формы представления коллекций являются RDD.
+
+Работу со \texttt{Spark} можно вести и через \texttt{spark-shell} (для \texttt{Scala}) или через \texttt{pyspark} (для \texttt{Python}).
+
+Для реальных проектов требуется создать проект определенной структуры, например, так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+sbt new MrPowers/spark-sbt.g8
+\end{lstlisting}
+а затем импортировать его в ItelliJ IDEA.
+
+Затем нужно будет собрать проект в jar-файл, перенести этот файл на кластер и запустить \texttt{spark-submit} с полученным jar-файлом.
+
+\texttt{SparkContext} -- это предшественник \texttt{SparkSession} и используется для работы с RDD
+\begin{lstlisting}[
+title = {\sffamily Scala},
+style = scala,
+numbers = none
+]
+val conf = new SparkConf().setAppName(appName)
+val sc = new SparkContext(conf)
+\end{lstlisting}
+
+\begin{lstlisting}[
+title = {\sffamily Python},
+style = IronPython,
+numbers = none	
+]
+conf = SparkConf().setAppName(appName)
+sc = SparkContext(conf=conf)
+\end{lstlisting}
+
+Сейчас к \texttt{SparkContext} напрямую обращаться не нужно. Лучше сразу создать \texttt{SparkSession}, а затем если вдруг возникнет необходимость из-под сессии вызывать контекст.
+
+При построении DAG есть два типа операций:
+\begin{itemize}
+	\item \emph{Transformations} -- описание вычислений (\texttt{map}, \texttt{filter}, \texttt{groupByKey} etc.),
+	
+	\item \emph{Actions} -- действия, запускающие расчеты (\texttt{reduce}, \texttt{collect}, \texttt{take} etc.).
+\end{itemize}
+
+Без \emph{действий} вычисления не запускаются! Чтобы \texttt{Spark} каждый раз не вычислял весь граф заново, можно сказать \texttt{sc.textFile("...").cache()}.
+
+Прочитать файлы (с заголовком) с локальной файловой системы в DataFrame можно так
+\begin{lstlisting}[
+title = {\sffamily Scala},
+style = scala,
+numbers = none	
+]
+val df = spark.read.option("header", true).csv("file.csv")
+// или так
+val df = spark.read.option("header", true).csv("/Users/leor.finkelberg/Scala_projects/citibike.csv")
+df.show()
+val tf = spark.read.option("header", true).text("file.txt")
+tf.head
+\end{lstlisting}
+
+Аналогично на Python
+\begin{lstlisting}[
+title = {\sffamily Python},
+style = IronPython,
+numbers = none	
+]
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.appName("test").master("local[*]").getOrCreate()
+df = spark.read.option("header", True).csv("/Users/leor.finkelberg/Python_projects/file.csv")
+\end{lstlisting}
+
+Можно передать сразу несколько пар с помощью \texttt{options} через ассоциативный массив
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+val df = spark.read.options(Map("delimiter"->",", "header"->"true")).csv("file.csv")
+\end{lstlisting}
+
+К слову, можно считать все csv-файлы из директории просто указав путь к ней
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val collect_csv = spark.read.csv("folder_with_csv")
+\end{lstlisting}
+
+Аналогичным образом можно записать результат вычислений в файл
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.write.option("header", true).csv("from_spark.csv")  // в текущей директории будет создана директория (!) from_spark_csv, в которой будет лежать csv-файл
+// или
+df.write.options(Map("header"->"true", "delimiter"->",")).csv("from_spark_again.csv")
+\end{lstlisting}
+
+Дополнительно можно управлять поведением с помощью класса \texttt{SaveMode}
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import org.apache.spark.sql.SaveMode
+
+df.write.mode(SaveMode.Overwrite).csv("file.csv")
+df.write.mode(SaveMode.ErrorIfExists).csv("file.csv")
+...
+\end{lstlisting}
+
+
+Для запуска приложения на кластере используется \texttt{spark-submit}
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+export HADOOP_CONF_DIR=...
+./bin/spark-submit \
+    --class org.apache.spark.examples.SparkPi \
+    --master yarn \
+    --deploy-mode cluster \
+    --executor-memory 20G \
+    --num-executors 50 \
+    /path/to/examples.jar 1000
+\end{lstlisting}
+
+Здесь 1000 -- это аргумент, который попадет в наше приложение.
+
+Найти скрипт \texttt{spark-submit} можно, например, здесь \directory{HOME > Anaconda3 > Lib > site-packages > pyspark > bin}.
+
+Основные аргументы \texttt{spark-submit}:
+\begin{itemize}
+	\item \verb*|--driver-cores|/\verb*|--executor-cores| -- количество ядер для каждого из элементов приложения (на контейнер!); executors выполняются в отдельных контейнерах; сколько будет контейнеров зависит от YARN,
+	
+	\item \verb*|--driver-memory|/\verb*|--executor-memory| -- количество памяти для каждого из элементов приложения (на контейнер!),
+	
+	\item \verb*|--queue| -- очередь в YARN, в которой будет выполняться приложение,
+	
+	\item \verb*|--num-executors| -- количество executors (может быть динамическим)
+\end{itemize}
+
+Spark-приложение упаковывается в uber-jar (жирный jar), содержащий необходимые зависимости. Его можно располагать как на локальной файловой системе, так и на HDFS.
+
+Такой jar можно собрать командой (нужен плагин \texttt{sbt-assembly})
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+sbt assembly
+\end{lstlisting}
+
+Если хочется тащить с собой лишние зависимости, есть три варианта:
+\begin{itemize}
+	\item \verb*|--jars| -- указание пути к дополнительным jar-файлам,
+	
+	\item \verb*|--packages| -- подключение зависимости из удаленных репозиториев (см. \url{https://spark-packages.org/}); полезно скорее для интерактивных приложений
+	
+	\begin{lstlisting}[
+	style = bash,
+	numbers = none
+	]
+--packages datastax:spark-cassandra-connector_2.11:2.0.7
+	\end{lstlisting}
+
+    \item \texttt{CLASSPATH} -- переменная окружения, в которой можно указать дополнительные jar-файлы.
+\end{itemize}
+
+Есть два режима деплоя приложения:
+\begin{itemize}
+	\item \texttt{client} -- драйвер запускается \emph{локально}, executors -- на \emph{кластере},
+	
+	\item \texttt{cluster} -- драйвер, как и executors, запускается на \emph{кластере}.
+\end{itemize}
+
+
+
+\section{Создание Spark DataFrame на основе списка}
+
+Создание объекта \texttt{Spark} \texttt{DataFrame} на основе списка
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: packages = [
+          ('Ansys', 'direct', 15550),
+          ('Nastran', 'iterative', 40000),
+          ('Comsole', 'direct', 45000)
+      ]
+
+In[]: spark.createDataFrame(packages, ['package_name', 'solver', 'price']).collect()
+Out[]:
+[Row(package_name='Ansys', solver='direct', price=15550),
+ Row(package_name='Nastran', solver='iterative', price=40000),
+ Row(package_name='Comsole', solver='direct', price=45000)]
+\end{lstlisting}
+
+\section{Создание Spark DataFrame на основе объекта RDD}
+
+Создание объекта \texttt{DataFrame} на основе объекта RDD
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+# RDD
+In[]: lst = [('Alice', 18),
+             ('Jhon', 22),
+             ('Alex', 48)]
+In[]: sc = spark.sparkContext  # <--
+
+In[]: rdd = sc.parallelize(lst)  # pyspark.rdd.RDD; Resilient Distributed Dataset
+In[]: spark.createDataFrame(rdd).collect()
+
+In[]: df = spark.createDataFrame(rdd, ['name', 'age'])
+In[]: df.collect()   # [Row(name='Alice', age=18),
+                     #  Row(name='Jhon', age=22),
+                     #  Row(name='Alex', age=48)]
+\end{lstlisting}
+
+\section{Создание Spark DataFrame на основе схемы StructType()}
+
+Создание объекта \texttt{DataFrame} на основе схемы
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+# schema
+In[]: from pyspark.sql.types import (StringType, IntegerType,
+                                     StructField, StructType)
+
+In[]: schema = StructType([
+                   StructField('name', StringType(), True),  # поле 'name'
+                   StructField('age', IntegerType(), True)   # поле 'age'
+               ])
+
+In[]: df = spark.createDataFrame(rdd, schema)
+
+In[]: df.collect()  # [Row(name='Alice', age=18),
+                    #  Row(name='Jhon', age=22),
+                    #  Row(name='Alex', age=48)]                               
+\end{lstlisting}
+
+\section{Создание Spark DataFrame на основе pandas}
+
+Создание объекта \texttt{Spark} \texttt{DataFrame} на основе \texttt{pandas} \texttt{DataFrame}
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: data = pd.read_csv('file.csv')
+In[]: df_spark = spark.createDataFrame(data).collect()
+\end{lstlisting}
+
+
+Использование \texttt{SQL}-запросов с объектами \texttt{Spark} \texttt{DataFrame}
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: type(df)  # pyspark.sql.dataframe.DataFrame
+In[]: df.collect()
+Out[]:
+# [Row(url='url1', ts='2018-08-15 00:00:00', service='tw', delta=1),
+#  Row(url='url1', ts='2018-08-15 00:05:00', service='tw', delta=3),
+#  Row(url='url1', ts='2018-08-15 00:11:00', service='tw', delta=1),
+#  ...
+#  Row(url='url2', ts='2018-08-15 00:26:00', service='fb', delta=13)]
+
+In[]: df.createOrReplaceTempView('social_delta_tab')  # создать временную таблицу
+                                                      # с именем `social_delta_tab`
+In[]: sql_result = spark.sql('''
+                       SELECT url, service, sum(delta) AS summa
+                       FROM social_delta_tab
+                       GROUP BY url, service
+                   ''')
+In[]: sql_result.collect()  # результат SQL-запроса
+Out[]:
+[Row(url='url1', service='fb', summa=360),
+ Row(url='url2', service='tw', summa=1200),
+ Row(url='url2', service='fb', summa=38),
+ Row(url='url1', service='tw', summa=59)]
+\end{lstlisting}
+
+\section{Зарегистрировать пользовательскую функцию}
+
+Зарегистрировать пользовательскую функцию
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: power_2 = spark.udf.register('power_2', lambda x: x**2)
+In[]: spark.sql("SELECT power_2(11)").collect()  # [Row(power_2(11)='121')]
+
+In[]: from pyspark.sql.types import IntegerType
+In[]: stringLength = spark.udf.register('stringLength', lambda x: len(x), IntegerType())
+In[]: spark.sql("SELECT stringLength('test')").collect()  # [Row(stringLength(test)=4)]
+\end{lstlisting}
+
+\section{Фильтрация и агрегация}
+
+Конструкция запроса \texttt{Spark} очень похожа на конструкцию \texttt{pandas}
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: df_spark = spark.createDataFrame(pd.read_csv('data.csv'))
+In[]: df_spark.filter(df_spark.delta >= 30).collect()
+# или так
+In[]: df_spark.where(df_spark.delta >= 30).collect()
+
+In[]: (df_spark.filter(df_spark.delta >= 30).
+           groupBy('url').agg({'delta' : 'sum'}).
+           collect()  # возвращает все записи в формате списка строк Row()
+      )
+Out[]:
+[Row(url='url1', sum(delta)=293),
+ Row(url='url2', sum(delta)=1180)]
+\end{lstlisting}
+
+
+\begin{minipage}[t]{0.45\textwidth}
+Пример агрегации в \texttt{PySpark} с помощью \texttt{SQL}-запроса
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: spark.sql('''
+          SELECT gender,
+                 usertype,
+                 max(tripduration)
+          FROM data
+          GROUP BY gender, usertype
+          ORDER BY gender
+      ''').show()
+Out[]:
++------+----------+-----------------+
+|gender|  usertype|max(tripduration)|
++------+----------+-----------------+
+|     0|  Customer|           126180|
+|     0|Subscriber|              342|
+|     1|Subscriber|            40339|
+|     2|Subscriber|            15905|
++------+----------+-----------------+
+\end{lstlisting}
+\end{minipage}
+\hspace*{5mm}
+\begin{minipage}[t]{0.48\textwidth}
+
+В \texttt{pandas} решение этой задачи может быть записано в виде
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: (data.groupby(['gender', 'usertype']).
+                                     agg(np.max))
+Out[]:
+                   tripduration
+gender usertype                
+0      Customer          126180
+       Subscriber           342
+1      Subscriber         40339
+2      Subscriber         15905
+\end{lstlisting}
+\end{minipage}
+
+
+\section{Сводная информация}
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: df_spark.describe().show()
+Out[]:
++-------+----+-------------------+-------+------------------+
+|summary| url|                 ts|service|             delta|
++-------+----+-------------------+-------+------------------+
+|  count|  30|                 30|     30|                30|
+|   mean|null|               null|   null|55.233333333333334|
+| stddev|null|               null|   null|140.58049193484734|
+|    min|url1|2018-08-15 00:00:00|     fb|                 1|
+|    max|url2|2018-08-15 00:41:00|     tw|               645|
++-------+----+-------------------+-------+------------------+
+
+In[]: df_spark.describe(['url']).show()
+Out[]:
++-------+----+
+|summary| url|
++-------+----+
+|  count|  30|
+|   mean|null|
+| stddev|null|
+|    min|url1|
+|    max|url2|
++-------+----+
+\end{lstlisting}
+
+\section{Оконные функции в контексте SQL и Spark DataFrame}
+
+\texttt{Spark SQL} поддерживает три вида оконных функций (см. \tblref{tab:sql_df_api}):
+
+\begin{itemize}
+	\item ранжирующие,
+	
+	\item аналитические,
+	
+	\item агрегатные (любую агрегатную функцию\footnote{Например, \texttt{AVG}, \texttt{SUM}, \texttt{COUNT} и пр.} можно использовать в качестве оконной функции)
+\end{itemize}
+
+Чтобы использовать оконную функцию, следует указать, что функция должна использоваться как \emph{оконная} одним из следующих способов:
+
+\begin{itemize}
+	\item добавить ключевое слово \texttt{OVER} после функции поддерживаемой \texttt{SQL}, например, \texttt{AVG(revenue) OVER (...)} или
+	
+	\item вызвать метод \texttt{over}, например, \texttt{rank().over(...)}.
+\end{itemize}
+
+Итак, функция <<помечена>> как оконная. Теперь можно определить спецификацию окна. Спецификация окна включает три части:
+
+\begin{itemize}
+	\item спецификация секционирования (группировка строк): определяет какие строки будут входить в одну группу,
+	
+	\item спецификация сортировки: определяет в каком порядке будут располагаться строки в группе,
+	
+	\item спецификация фрейма: определяет какие стоки будут включены в фрейм для текущей строки, основываясь на их положении относительно текущей строки.
+\end{itemize}
+
+\begin{table}[h]
+	\centering
+	\caption{\itshape Ранжирующие и аналитические функции \texttt{PySpark}}\label{tab:sql_df_api}
+	%\renewcommand{\arraystretch}{1.05}
+	\begin{tabular}{cll}
+		{} & контекст {SQL} & {DataFrame API} \\ \hline\hline
+		Ранжирующие функции & \texttt{rank} & \texttt{rank} \\
+		\rowcolor[gray]{0.96} {} & \texttt{dense\_rank} & \texttt{denseRank} \\
+		{} & \texttt{percent\_rank} & \texttt{percentRank} \\
+		\rowcolor[gray]{0.96} {} & \texttt{ntile} & \texttt{ntile} \\
+		{} & \texttt{row\_number} & \texttt{rowNumber} \\ \hline
+		\rowcolor[gray]{0.96} Аналитические функции & \texttt{cume\_dist} & \texttt{cumeDist} \\
+		{} & \texttt{first\_value} & \texttt{firstValue} \\
+		\rowcolor[gray]{0.96}{} & \texttt{last\_value} & \texttt{lastValue} \\
+		{} & \texttt{lag} & \texttt{lag} \\
+		\rowcolor[gray]{0.96} {} & \texttt{lead} & \texttt{lead} \\
+	\end{tabular}
+\end{table}
+
+В контексте \texttt{SQL} ключевые слова \texttt{PARTITION BY} и \texttt{ORDER BY} используются для определения групп в \emph{спецификации секционирования} и \emph{спецификации сортировки}, соответственно
+
+\begin{lstlisting}[
+numbers = none
+]
+OVER (PARTITION BY ... ORDER BY ...)
+\end{lstlisting}
+
+В контексте \texttt{DataFrame API} \emph{оконную функцию} можно объявить следующим образом
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+from pyspark.sql.window import Window
+
+windowSpec = Window.partitionBy(...).orderBy(...)
+\end{lstlisting}
+
+Дополнительно требуется определить:
+
+\begin{itemize}
+	\item начальную границу фрейма,
+	
+	\item конечную границу фрейма,
+	
+	\item тип фрейма.
+\end{itemize}
+
+Существует пять типов границ:
+
+\begin{itemize}
+	\item \texttt{UNBOUNDED PRECEDING}: первая строка в группе,
+	
+	\item \texttt{UNBOUNDED FOLLOWING}: последняя строка в группе,
+	
+	\item \texttt{CURRENT ROW}: текущая строка,
+	
+	\item \texttt{<value> PRECEDING}: ,
+	
+	\item \texttt{<value> FOLLOWING}.
+\end{itemize}
+
+Различают два типа фреймов:
+
+\begin{itemize}
+	\item строковый фрейм \texttt{ROWframe}: базируется на физическом смещении относительно текущей строки. Если в качестве границы используется \texttt{CURRENT ROW}, то это означает, что речь идет о текущей строке. \texttt{<value> PRECEDING} и \texttt{<value> FOLLOWING} указывают число строк до и после текущей строки, соответственно.
+	
+	\item диапазонный фрейм \texttt{RANGEframe}: базируется на логическом смещении относительно положения текущей строки.
+\end{itemize}
+
+\begin{lstlisting}[
+title = {\ttfamily Visual representation of frame \\[-1mm] ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING},
+numbers = none
+]
+                     poduct     | category   |revenue
+                     -----------+------------+-------
+                     Bendable   | Cell phone | 3000
+                     Foldable   | Cell phone | 3000 <- 1 PRECEDING
+Current input row -> Ultra thin | Cell phone | 6000
+                     Thin       | Cell phone | 6000 <- 1 FOLLOWING
+                     Very thin  | Cell phone | 6000
+\end{lstlisting}
+
+Рассмотрим работу \texttt{RANGEframe}. Рассмотрим пример. В этом примере сортировка проводится по <<revenue>>, в качестве начальной границы используется в \texttt{2000 PRECEDING}, в качестве конечной границы - \texttt{1000 FOLLOWING}.
+
+В контексте \texttt{SQL} этот фрейм определяется как
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+RANGE BETWEEN 2000 PRECEDING AND 1000 FOLLOWING
+\end{lstlisting}
+
+Границы фрейма вычисляются следующим образом: \texttt{[current revenue value - 2000; current revenue value + 1000]}, т.е. границы фрейма пересчитываются в зависимости от текущего значения строки в столбце <<revenue>>
+
+\begin{lstlisting}[
+title = {\ttfamily Visual representation of frame \\[-1mm] RANGE BETWEEN 2000 PRECEDING AND 1000 FOLLOWING \\[-1mm] (ordering expression: revenue)},
+numbers = none
+]
+# 1 step
+                     poduct     | category   |revenue
+                     -----------+------------+-------
+Current input row -> Bendable   | Cell phone | 3000  <-- revenue range [3000-2000=1000; 3000+1000=4000]
+                     Foldable   | Cell phone | 3000  <--
+                     Ultra thin | Cell phone | 5000
+                     Thin       | Cell phone | 6000
+                     Very thin  | Cell phone | 6000
+# 2 step
+                     poduct     | category   |revenue
+                     -----------+------------+-------
+                     Bendable   | Cell phone | 3000  <-- revenue range [3000-2000=1000; 3000+1000=4000]
+Current input row -> Foldable   | Cell phone | 3000  <--
+                     Ultra thin | Cell phone | 5000
+                     Thin       | Cell phone | 6000
+                     Very thin  | Cell phone | 6000
+# 3 step
+                     poduct     | category   |revenue
+                     -----------+------------+-------
+                     Bendable   | Cell phone | 3000  <-- revenue range [5000-2000=3000; 5000+1000=6000]
+                     Foldable   | Cell phone | 3000  <--
+Current input row -> Ultra thin | Cell phone | 5000  <--
+                     Thin       | Cell phone | 6000  <--
+                     Very thin  | Cell phone | 6000  <--
+# 4 step
+                     poduct     | category   |revenue
+                     -----------+------------+-------
+                     Bendable   | Cell phone | 3000
+                     Foldable   | Cell phone | 3000 
+                     Ultra thin | Cell phone | 5000  <-- revenue range [6000-2000=4000; 6000+1000=7000]
+Current input row -> Thin       | Cell phone | 6000  <--
+                     Very thin  | Cell phone | 6000  <--
+# 5 step
+                     poduct     | category   |revenue
+                     -----------+------------+-------
+                     Bendable   | Cell phone | 3000
+                     Foldable   | Cell phone | 3000 
+                     Ultra thin | Cell phone | 5000  <-- revenue range [6000-2000=4000; 6000+1000=7000]
+                     Thin       | Cell phone | 6000  <--
+Current input row -> Very thin  | Cell phone | 6000  <--
+\end{lstlisting}
+
+Итак, чтобы определить спецификацию окна в контексте \texttt{SQL} используется конструкция
+
+\begin{lstlisting}[
+numbers = none
+]
+OVER (PARTITION BY ... ORDER BY ... frame_type BETWEEN start AND end)
+\end{lstlisting}
+где
+\texttt{frame\_type} может быть либо \texttt{ROWS} (\texttt{ROWframe}), либо \texttt{RANGE} (\texttt{RANGEframe}); \texttt{start} может принимать одно из следующих значений \texttt{UNBOUNDED PRECEDING}, \texttt{CURRENT ROW}, \texttt{<value> PRECEDING} и \texttt{<value> FOLLOWING}; \texttt{end} может принимать \texttt{UNBOUNDED FOLLOWING}, \texttt{CURRENT ROW}, \texttt{<value> PRECEDING} и \texttt{<value> FOLLOWING}.
+
+В контексте \texttt{DataFrame API} используется следующий шаблон
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: windowSpec = Window.partitionBy(...).orderBy(...)
+In[]: windowSpec.rowsBetween(start, end)  # для ROW frame
+In[]: windowSpec.rangeBetween(start, end)  # для RANGE frame
+\end{lstlisting}
+
+Рассмотрим другой пример
+
+\begin{lstlisting}[
+style = ironpython,
+emph = {mean_udf},
+numbers = none
+]
+In[]: from pyspark.sql.functions import pandas_udf, PandasUDFType
+In[]: from pyspark.sql import Window
+
+In[]: df = spark.createDataFrame(
+               [(1, 1.0), (1, 2.0), (2, 3.0), (2, 5.0), (2, 10.0)],
+               ('id', 'v')
+           )
+           
+In[]: @pandas_udf('double', PandasUDFType.GROUPED_AGG)
+      def mean_udf(v):
+          return v.mean()
+# оконное преобразование        
+In[]: w = Window.partitionBy('id').rowsBetween(Window.unboundedPerceding, Window.unboundedFollowing)
+In[]: df.withColumn('mean_v', mean_udf(df['v']).over(w)).show()
+Out[]:
++---+----+------+
+| id|   v|mean_v|
++---+----+------+
+|  1| 1.0|   1.5|
+|  1| 2.0|   1.5|
+|  2| 3.0|   6.0|
+|  2| 5.0|   6.0|
+|  2|10.0|   6.0|
++---+----+------+
+\end{lstlisting}
+
+Построить кумулятивную сумму для каждой группы \texttt{PARTITION BY} (первый элемент столбца \texttt{delta} используется в качестве первого элемента нового столбца \texttt{total}, затем первый элемент столбца \texttt{delta} суммируется со вторым элементом этого же столбца, а результат записывается как второй элемент столбца \texttt{total} и т.д.)
+
+\begin{lstlisting}[
+style = ironpython,
+emph = {mean_udf},
+numbers = none
+]
+In[]: df = spark.createDataFrame(pd.read_csv('social_delta.csv'))
+In[]: df.createOrReplaceTempView('social_del_tab')
+In[]: spark.sql('''
+         SELECT *,
+             sum(delta) OVER (PARTITION BY url, service ORDER BY ts) AS total
+         FROM social_del_tab 
+      ''').show(3)
+Out[]:
++----+-------------------+-------+-----+-----+
+| url|                 ts|service|delta|total|
++----+-------------------+-------+-----+-----+
+|url1|2018-08-15 00:00:00|     fb|    5|    5|  # <- 5
+|url1|2018-08-15 00:05:00|     fb|   15|   20|  # <- 5 + 15 = 20
+|url1|2018-08-15 00:11:00|     fb|   11|   31|  # <- 20 + 11 = 31
++----+-------------------+-------+-----+-----+
+only showing top 3 rows
+\end{lstlisting}
+
+Вычислить скользящее среднее для каждой группы \texttt{PARTITION BY}
+
+\begin{lstlisting}[
+style = ironpython,
+emph = {mean_udf},
+numbers = none
+]
+In[]: df = spark.createDataFrame(pd.read_csv('social_totals.csv'))
+In[]: df.createOrReplaceTempView('social_tot_tab')
+
+In[]: df = spark.sql('''
+               SELECT *,
+                   AVG(total) OVER (PARTITION BY url, service ORDER BY ts
+               ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS total_avg3
+               FROM social_tot_tab
+           ''').show(3)
+Out[]:
++----+-------------------+-------+-----+------------------+
+| url|                 ts|service|total|        total_avg3|
++----+-------------------+-------+-----+------------------+
+|url1|2018-08-15 00:00:00|     fb|    5|               5.0|  # <- 5/1 = 5
+|url1|2018-08-15 00:05:00|     fb|   20|              12.5|  # <- (5 + 20)/2 = 12.5
+|url1|2018-08-15 00:11:00|     fb|   31|18.666666666666668|  # <- (5 + 20 + 31)/3 = 18.666
++----+-------------------+-------+-----+------------------+
+only showing top 3 rows
+\end{lstlisting}
+
+Вычислить скользящее среднее для каждой группы, включая записи, которые отстоят от текущей записи на <<5 мин назад>>
+
+\begin{lstlisting}[
+style = ironpython,
+emph = {mean_udf},
+numbers = none
+]
+In[]: df = spark.createDataFrame(pd.read_csv('social_totals.csv', parse_dates=['ts']))
+In[]: df.createOrReplaceTempView('df')
+
+In[]: spark.sql('''
+          SELECT *, AVG(total) OVER (PARTITION BY url, service ORDER BY ts
+              RANGE BETWEEN INTERVAL 5 MINUTES PRECEDING AND CURRENT ROW) AS total_avg5min
+          FROM df
+      ''').show(3)
+Out[]:
++----+-------------------+-------+-----+-------------+
+| url|                 ts|service|total|total_avg5min|
++----+-------------------+-------+-----+-------------+
+|url1|2018-08-15 00:00:00|     fb|    5|          5.0|  # <- 5
+|url1|2018-08-15 00:05:00|     fb|   20|         12.5|  # <- (5 + 20)/2 = 12.5 (5 мин)
+|url1|2018-08-15 00:11:00|     fb|   31|         31.0|  # <- 31 (6 мин)
+|url1|2018-08-15 00:18:00|     fb|   45|         45.0|  # <- 45 (7 мин)
+|url1|2018-08-15 00:21:00|     fb|   59|         52.0|  # <- (45 + 59)/2 = 52 (3 мин)
+|url1|2018-08-15 00:30:00|     fb|   67|         67.0|
++----+-------------------+-------+-----+-------------+
+only showing top 6 rows
+\end{lstlisting}
+
+Ту же задачу в \texttt{pandas} можно решить следующим образом
+
+\begin{lstlisting}[
+style = ironpython,
+emph = {mean_udf},
+numbers = none
+]
+In[]: df = pd.read_csv('social_totals.csv', parse_dates=['ts'])
+In[]: df.groupby(['url', 'service']).rolling('5min', on='ts', min_periods=1).mean().reset_index(drop=True)
+Out[]:
+                    ts   total
+0  2018-08-15 00:00:00     5.0
+1  2018-08-15 00:05:00    20.0
+2  2018-08-15 00:11:00    31.0
+3  2018-08-15 00:18:00    45.0
+4  2018-08-15 00:21:00    52.0
+5  2018-08-15 00:30:00    67.0
+\end{lstlisting}
+
+
+\begin{minipage}[t]{0.6\textwidth}
+Пусть задан объект \texttt{PySpark} \texttt{DataFrame}
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: productRevenue = spark.createDataFrame([
+                           ('Thin', 'Cell phone', 6000),
+                           ('Normal', 'Tablet', 1500),
+                           ('Mini', 'Tablet', 5500),
+                           ('Ultra thin', 'Cell phone', 5000),
+                           ('Very thin', 'Cell phone', 6000),
+                           ('Big', 'Tablet', 2500),
+                           ('Bendable', 'Cell phone', 3000),
+                           ('Foldable', 'Cell phone', 3000),
+                           ('Pro', 'Tablet', 4500),
+                           ('Pro2', 'Tablet', 6500)],
+                           ['product', 'category', 'revenue']
+                       )
+\end{lstlisting}
+\end{minipage}
+\hspace*{2mm}
+\begin{minipage}[t]{0.3\textwidth}
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: productRevenue.show()
+Out[]:
++----------+----------+-------+
+|   product|  category|revenue|
++----------+----------+-------+
+|      Thin|Cell phone|   6000|
+|    Normal|    Tablet|   1500|
+|      Mini|    Tablet|   5500|
+|Ultra thin|Cell phone|   5000|
+| Very thin|Cell phone|   6000|
+|       Big|    Tablet|   2500|
+|  Bendable|Cell phone|   3000|
+|  Foldable|Cell phone|   3000|
+|       Pro|    Tablet|   4500|
+|      Pro2|    Tablet|   6500|
++----------+----------+-------+
+\end{lstlisting}
+\end{minipage}
+
+Требуется выявить первые два наименования наиболее дорогих продуктов из групп <<\texttt{Cell phone}>> и <<\texttt{Tablet}>>.
+
+Решение этой задачи на основе оконных функций может выглядеть следующим образом
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: productRevenue.createOrReplaceTempView('prod_rev')
+In[]: spark.sql('''
+          SELECT
+              product,
+              category,
+              revenue
+          FROM (
+              SELECT
+                  *,
+                  dense_rank() OVER (PARTITION BY category ORDER BY revenue DESC) AS rank
+              FROM prod_rev)
+          WHERE rank <= 2''').show()
+Out[]:
++----------+----------+-------+
+|   product|  category|revenue|
++----------+----------+-------+
+|      Thin|Cell phone|   6000|  # <- first group
+| Very thin|Cell phone|   6000|
+|Ultra thin|Cell phone|   5000|
+|      Pro2|    Tablet|   6500|  # <- second group
+|      Mini|    Tablet|   5500|
++----------+----------+-------+
+\end{lstlisting}
+
+То есть к каждой найденной группе применяется функция \texttt{dense\_rank} с помощью \texttt{PARTITION BY} выполняется группировка по столбцу <<\texttt{category}>>. Внутри группа упорядочивается по убыванию (\texttt{ORDER BY}) по столбцу <<\texttt{revenue}>>.
+
+Пусть теперь требуется вычислить на сколько отличается по стоимости самый дорогой продукт в группе от прочих продуктов из той же группы. Задача может быть решена так
+
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+In[]: import sys
+In[]: from pyspark.sql.window import Window
+In[]: import pyspark.sql.functions as func
+
+In[]: df = productRevenue
+
+In[]: windowSpec = (
+          Window.partitionBy(df['category']).
+                 orderBy(df['revenue'].desc()).
+                 rangeBetween(-sys.maxsize, sys.maxsize))
+                 
+In[]: revenue_diff = func.max(df['revenue']).over(windowSpec) - df['revenue']
+
+In[]: df.select(  # выбрать из объекта df соответствующие столбцы
+          df['product'],
+          df['category'],
+          df['revenue'],
+          revenue_diff.alias('revenue_diff')  # добавить в вывод этот столбец
+      ).show()
+Out[]:
++----------+----------+-------+------------+
+|   product|  category|revenue|revenue_diff|
++----------+----------+-------+------------+
+|      Thin|Cell phone|   6000|           0|  # <- первая группа
+| Very thin|Cell phone|   6000|           0|
+|Ultra thin|Cell phone|   5000|        1000|
+|  Bendable|Cell phone|   3000|        3000|
+|  Foldable|Cell phone|   3000|        3000|
+|      Pro2|    Tablet|   6500|           0|  # <- вторая группа
+|      Mini|    Tablet|   5500|        1000|
+|       Pro|    Tablet|   4500|        2000|
+|       Big|    Tablet|   2500|        4000|
+|    Normal|    Tablet|   1500|        5000|
++----------+----------+-------+------------+
+\end{lstlisting}
+
+\section{Работа с файловой системой Databricks}
+
+Databricks \url{https://databricks.com/product/unified-data-analytics-platform} -- это платформа для анализа больших данных, построенная вокруг Apache Spark. DBFS -- распределенная файловая система Databricks.
+
+Работа с файловой системой в рамках платформы Databricks осуществляется через модуль \texttt{dbutils}
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+# вывести список фалов текущей директории
+dbutils.fs.ls('dbfs:/FileStore/tables')
+# удалить файл из DBFS
+dbuitls.fs.rm('dbfs:/FileStore/tables/file_name.csv', True)
+\end{lstlisting} 
+
+Записать Spark-объект DataFrame можно записать, к примеру, на DBFS
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+pandas_data = pd.DataFrame({
+    'package_name' : ['Ansys', 'Nastran', 'Abaqus', 'LMS Virtual Lab', 'Comsole'],
+    'solver_type' : ['direct', 'iterative', 'direct', 'iterative', 'iterative'],
+    'language' : ['IronPython', 'Java', 'C++', 'Python', 'Erlang'],
+    'performance' : np.abs(10*np.random.RandomState(42).randn(5))
+})
+data = spark.createDataFrame(pandas_data)
+
+# сохранить объект на DBFS в формает csv
+data.write.save('dbfs:/FileStore/tables/data.csv', format='csv')
+
+# прочитать объект
+spark.sql('''
+    SELECT * FROM csv.`dbfs:/FileStore/tables/data.csv`
+''').show()
+
+# сохранить объект на DBFS в формате parquet
+data.write.save('dbfs:/FileStore/tables/cae_packages.parquet', format='parquet')
+
+# прочитать объект
+spark.sql('''
+    SELECT * FROM parquet.`dbfs:/FileStore/tables/cae_packages.parquet`
+''').show()
+\end{lstlisting}
+
+Формат Parquet -- это колончный (столбцово-ориентированный) формат хранения данных, который поддерживается системой Hadoop. Он сжимает и кодирует данные, и может работать с вложенными структурами -- все это делает его очень эффективным.
+
+К слову, удалить таблицы, находящиеся в оперативной памяти, можно так
+\begin{lstlisting}[
+style = ironpython,
+numbers = none
+]
+from pyspark.sql import SQLContext
+
+sqlcont = SQLContext(sc)
+
+for tab in sqlcont.tableName():
+    sqlcont.dropTempTable(tab)
+\end{lstlisting}
+
+
+
+
+
+% Источники в "Газовой промышленности" нумеруются по мере упоминания 
+\begin{thebibliography}{99}\addcontentsline{toc}{section}{Список литературы}
+	\bibitem{carey:spark-2015}{ \emph{Карау Х.}, Конвински Э., Венделл П., Захария М. Изучаем Spark: молниеносный анализ данных. -- М.: ДМК Пресс, 2015. -- 304 с. }
+\end{thebibliography}
+
+%\listoffigures\addcontentsline{toc}{section}{Список иллюстраций}
+
+\end{document}

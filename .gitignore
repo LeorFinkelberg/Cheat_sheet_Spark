@@ -1,0 +1,6 @@
+# === from latex ===
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.toc
