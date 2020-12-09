@@ -148,6 +148,7 @@ numbers = none
 ]
 val df = spark.read.option("header", true).csv("file.csv")
 // или так
+// требуется указывать полный абсолютный путь (~ не понимает)
 val df = spark.read.option("header", true).csv("/Users/leor.finkelberg/Scala_projects/citibike.csv")
 df.show()
 val tf = spark.read.option("header", true).text("file.txt")
