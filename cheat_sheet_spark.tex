@@ -77,6 +77,8 @@ val spark = SparkSession.builder()
     .getOrCreate()
 \end{lstlisting}
 
+Примеры использования Spark в ML можно найти здесь \url{https://github.com/apache/spark/tree/master/examples/src/main/scala/org/apache/spark/examples/ml}
+
 Метод \texttt{.master(...)} (или \texttt{.setMaster(...)} в конфигурации \texttt{SparkContext}) указывает, где нужно выполнить вычисления. Например,
 \begin{lstlisting}[
 style = scala,
@@ -92,7 +94,7 @@ numbers = none
 	
 	\item DataFrame API (он же SQL API),
 	
-	\item DataSet API (только для \texttt{Scala}).
+	\item DataSet API (только для \texttt{Scala}! В \texttt{Python} это не имеет смысла): Scala-вский DataSet по сути представляет собой коллекцию экземпляров строк определенного типа; и поэтому, когда мы применяемнапример, метод \texttt{filter}, то он применяется к каждой строке.
 \end{itemize}
 
 Различаются они в основном тем, в каком виде представлены \emph{распределенные коллекции} при вычислениях. На низком уровне все эти формы представления коллекций являются RDD.
@@ -167,6 +169,29 @@ spark = SparkSession.builder.appName("test").master("local[*]").getOrCreate()
 df = spark.read.option("header", True).csv("/Users/leor.finkelberg/Python_projects/file.csv")
 \end{lstlisting}
 
+Для того, чтобы типы полей файлов распознавались при загрузке можно использовать опцию \texttt{inferSchema}
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val dataCsv = spark.read
+                .option("header", "true")
+                .option("inferSchema", "true") // <- NB
+                .csv("filename.csv")
+\end{lstlisting}
+
+Результат будет таким
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+dataCsv.printSchema
+root
+ |-- fieldname1: integer (nullable = true)
+ |--  fieldname2: double (nullable = true)
+ ...
+\end{lstlisting}
+
 Можно передать сразу несколько пар с помощью \texttt{options} через ассоциативный массив
 \begin{lstlisting}[
 style = scala,
@@ -205,6 +230,24 @@ df.write.mode(SaveMode.ErrorIfExists).csv("file.csv")
 ...
 \end{lstlisting}
 
+В Spark лучше передавать НЕ csv-файлы (НЕ следует использовать!), а \texttt{Parquet/ORC} (наилучший вариант). Для потоковой обработки (или для случаев, когда не получается работать с колоночными данными) лучше использовать \texttt{Avro} вместо JSON.
+
+Для того чтобы результаты вычислений, представленных в виде большого числа маленьких файлов, сохранить в виде одного относительно большого нужно провести репартиционирование
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// hdfs не любит мелкие файлы!
+df.repartition(1).write.parquet("hdfs:///parquet-files/") // сжимаем до 1 партиции
+\end{lstlisting}
+
+Можно провести партицирование папками
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.write.partitionBy("year", "month").parquet("hdfs:///parquet-files/")
+\end{lstlisting}
 
 Для запуска приложения на кластере используется \texttt{spark-submit}
 \begin{lstlisting}[
