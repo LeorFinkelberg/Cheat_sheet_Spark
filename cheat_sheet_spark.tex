@@ -62,6 +62,97 @@ In[]: spark = (
       )
 \end{lstlisting}
 
+\section{Управление зависимостями проекта с помощью \texttt{build.sbt}}
+
+При работе со Scala-проектом с помощью \texttt{sbt} или IntelliJ IDEA версия языка определяется параметром \texttt{scalaVersion} в файле сборки \texttt{build.sbt}, например
+\begin{lstlisting}[
+	style = scala,
+	numbers = none	
+	]
+	scalaVersion := "2.12.12"
+	...
+\end{lstlisting}
+
+Остается только при запуске сессии в REPL набрать \texttt{sbt console} (а не \texttt{scala}), чтобы загрузить \emph{указанную} версию Scala и все зависимости проекта.
+
+В файл сборки \texttt{build.sbt} следует добавить следующие строки
+\begin{lstlisting}[
+	title = {\sffamily Пример файла build.sbt},
+	style = scala,
+	numbers = none	
+	]
+	name := "SparkML"
+	
+	version := "1.0"
+	
+	scalaVersion := "2.12.12"
+	
+	libraryDependencies ++= Seq(
+	"org.apache.spark" %% "spark-sql" % "3.0.1" % "provided",
+	"org.apache.spark" % "spark-mllib_2.12" % "3.0.1" % "provided"  // в строке используется один "%"!!!
+	)
+\end{lstlisting}
+
+Для того чтобы \texttt{sbt} работал корректно, требуется разместить \texttt{AppFileName.scala} и \texttt{build.sbt} следующим образом:
+\begin{itemize}
+	\item файл \texttt{build.sbt} должен лежать в корне проекта,
+	
+	\item а scala-скрипт -- по пути \directory{src > main > scala > AppFileName.scala}.
+\end{itemize}
+
+Теперь можно упаковать приложение
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+sbt package
+\end{lstlisting}
+
+В поддиректории \directory{project} проекта будет файл с версией \texttt{sbt}
+\begin{lstlisting}[
+title = {\sffamily project/build.properties},
+style = bash,
+numbers = none	
+]
+sbt.version = 1.3.13
+\end{lstlisting}
+
+Там же можно расположить файл с описанием плагинов для \texttt{sbt}
+\begin{lstlisting}[
+title = {\sffamily project/plugins.sbt},
+style = bash,
+numbers = none	
+]
+addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.4.0")
+addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.10")
+\end{lstlisting}
+
+В корне проекта можно расположить конфигурационный файл для \texttt{scalafmt}
+\begin{lstlisting}[
+title = {\sffamily .scalafmt},
+style = bash,
+numbers = none	
+]
+version = "2.6.4"
+
+align.preset = more  // For pretty aligment
+maxColumn = 100 // For my wide 30" display
+\end{lstlisting}
+
+Для запуска scala-приложения используется \texttt{spark-submit}
+\begin{lstlisting}[
+	style = bash,
+	numbers = none	
+	]
+	spark-submit \
+	--class "AppFileName" \
+	--master local \
+	target/scala-2.12/app-file-name_2.12-1.0.jar
+\end{lstlisting}
+
+
+
+
 \section{Начало работы со Spark}
 
 Отправной точкой является \texttt{SparkSession} -- создание распределенной системы для исполнения будущих вычислений
@@ -1054,7 +1145,7 @@ for tab in sqlcont.tableName():
 
 \section{Приемы работы со Spark в Apache Zeppelin}
 
-\texttt{Apache Zeppelin} \url{http://zeppelin.apache.org/download.html} -- это многофункциональная интерактивная оболочка, которая позволяет выполнять запросы к различным источникам данных, обрабатывать и визуализировать результаты. Близкий аналог \texttt{Jupyter Notebook}, но \texttt{Zeppelin} больше ориентирован на работу с базами данных. Он использует концепцию <<интерпретаторов>> -- плагинов, которые обеспечивают бекенд для какого-либо языка и/или БД.
+\texttt{Apache Zeppelin} \url{http://zeppelin.apache.org/download.html} -- это многофункциональная интерактивная оболочка, которая позволяет выполнять запросы к различным источникам данных, обрабатывать и визуализировать результаты, а самое главное <<из коробки>> поддерживает \texttt{Spark}. Близкий аналог \texttt{Jupyter Notebook}, но \texttt{Zeppelin} больше ориентирован на работу с базами данных. Он использует концепцию <<интерпретаторов>> -- плагинов, которые обеспечивают бекенд для какого-либо языка и/или БД.
 
 Проще всего запустить \texttt{Zeppelin} с помощью \texttt{Docker}
 \begin{lstlisting}[
@@ -1072,6 +1163,8 @@ docker run -p 8080:8080 --rm \
 \end{lstlisting}
 
 Страница \texttt{Zeppelin} будет доступна в браузере \texttt{localhost:8080}.
+
+Подробное руководство по работе с \texttt{Apache Zeppelin} можно найти по адресу \url{https://docs.arenadata.io/aaw/Zeppelin/index.html}.
 
 
 
