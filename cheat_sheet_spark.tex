@@ -21,6 +21,17 @@
 \tableofcontents
 
 
+\section{Полезные ресурсы по Spark}
+
+Очень крутая книга \href{https://the-internals-of-spark-sql.readthedocs.io/connector/SupportsRead/}{\textit{The Internals of Spark SQL}} по внутреннему устройству Spark от Jacek Laskowski. GitHub-репозиторий \href{https://github.com/jaceklaskowski/mastering-spark-sql-book}{книги}.
+
+Официальная документация по ML \url{https://spark.apache.org/docs/1.2.2/ml-guide.html}.
+
+Официальная документация по MLlib \url{https://spark.apache.org/docs/latest/ml-guide.html}.
+
+Официальная документация по \texttt{sbt} \url{https://www.scala-sbt.org/1.x/docs/sbt-by-example.html}.
+
+
 \section{Общие сведения}
 
 \texttt{Apache Spark} -- это универсальная и высокопроизводительная кластерная вычислительная платформа \cite{carey:spark-2015}. Благодаря разнопрофильным инструментам для аналитической обработки данных, \texttt{Apache Spark} активно используется в системах интернета вещей на стороне IoT-платформы, а также в различных бизнес-приложениях, в т.ч. на базе методов машинного обучения.
@@ -183,9 +194,9 @@ numbers = none
 \begin{itemize}
 	\item RDD API,
 	
-	\item DataFrame API (он же SQL API),
+	\item DataFrame API (он же SQL API): не типизирован,
 	
-	\item DataSet API (только для \texttt{Scala}! В \texttt{Python} это не имеет смысла): Scala-вский DataSet по сути представляет собой коллекцию экземпляров строк определенного типа; и поэтому, когда мы применяемнапример, метод \texttt{filter}, то он применяется к каждой строке.
+	\item DataSet API (только для \texttt{Scala}! В \texttt{Python} это не имеет смысла): Scala-вский DataSet по сути представляет собой коллекцию экземпляров строк определенного типа (то есть это типизированный DataFrame); и поэтому, когда мы применяемнапример, метод \texttt{filter}, то он применяется к каждой строке.
 \end{itemize}
 
 Различаются они в основном тем, в каком виде представлены \emph{распределенные коллекции} при вычислениях. На низком уровне все эти формы представления коллекций являются RDD.
@@ -1141,6 +1152,175 @@ sqlcont = SQLContext(sc)
 for tab in sqlcont.tableName():
     sqlcont.dropTempTable(tab)
 \end{lstlisting}
+
+\section{Приемы работы с библиотекой Breeze}
+
+Математика в Spark, как правило, реализована с помощью Breeze. Библиотека Breeze нераспределенная!!! Предполагается, что Breeze работает над небольшими блоками данных.
+
+Оптимизация в Breeze
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+import breeze.linalg._
+import breeze.numerics._
+import breeze.optimize.{DiffFunction, LBFGS}
+
+val X = DenseMatrix.rand(2000, 3)
+val y = X*DenseVector(0.5, -0.1, 0.2) // цель
+
+val J = new DiffFunction[DenseVector[Double]] {
+    def calculate(w: DenseVector[Double]) = {
+        val e = X*w - y
+        val loss = sum(e ^:^ 2.0) / (2 * X.rows)
+        val grad = (e.t * X) /:/ (2.0 * X.rows)
+        (loss, grad.t)
+    }
+}
+
+val optimizer = new LBFGS[DenseVector[Double]]()
+println(optimizer.minimize(J, DenseVector(0.0, 0.0, 0.0)))
+// DenseVector(0.49999998855333594, -0.10000001104504522, 0.20000002605021208) // приближение к цели
+\end{lstlisting}
+
+Здесь используется метод L-BFGS. Это алгоритм оптимизации семейства квази-ньютоносвких методов, который аппроксимирует алгоритм Бройдена-Флетчера-Гольфарба-Шанно с учетом ограниченного объема компьютерной памяти. L-BFGS -- популярный алгоритм оценки параметров в машинном обучении.
+
+\section{Spark ML Pipelines}
+
+Различают
+\begin{itemize}
+	\item \emph{Transformer}: принимают на вход данные, возвращает преобразованные данные,
+	
+	\item \emph{Estimator}: принимает на вход данные, возвращает Transformer.
+\end{itemize}
+
+Существуют еще \emph{Model} -- это трансформер, который был получен с помощью Estimator.
+
+Эти объекты можно собирать в конвейеры, например: \texttt{Transformer1} \textrightarrow\ \texttt{Estimator1} \textrightarrow\ \texttt{Estimator2}.
+
+Сам по себе конвейер является Estimator, т.е. ему можно подать на вход данные. Если в конвейере есть Transformer, то данные будут преобразованы и переданы дальше. Если в конвейере будет Estimator, то данные будут поданы на вход этому Estimator, который вернет Transformer, который в свою очередь будет применен к данным и вернет преобразованные данные.
+
+Пример
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import org.apache.spark.sql.SparkSession
+
+val spark = SparkSession
+              .builder.
+              .appName("test")
+              .master("local[*]")
+              .getOrCreate()
+              
+val X = DenseMatrix.rand(10000, 3)
+val y = X*DenseVector(0.5, -0.1, 0.2)
+val data = DenseMatrix.horzcat(X, y.asDenseMatrix.t)
+              
+val df = spark.createDataFrame(
+    data(*, ::).iterator // итератор по строкам
+        .map(row => (row(0), row(1), row(2), row(3)))
+        .toSeq
+).toDF("x1", "x2", "x3", "y")
+df.show(1)
+// Вывод
++------------------+------------------+------------------+------------------+
+|                x1|                x2|                x3|                 y|
++------------------+------------------+------------------+------------------+
+|0.9528102359167567|0.7292676335740298|0.5690442082761085|0.5172871962561971|
++------------------+------------------+------------------+------------------+
+only showing top 1 row
+\end{lstlisting}
+
+Подготовка конвейера
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.feature.VectorAssembler
+import org.apache.spark.ml.regression.{
+	LinearRegression, // модель ML
+	LinearRegressionModel // обученная модель ML
+}
+
+val pipeline = new Pipeline().setStages(
+  Array( // массив этапов
+    new VectorAssembler() // трансформер
+      .setInputCols(Array("x1", "x2", "x3"))
+      .setOutputCol("features"), // (x1, x2, x3) -> features
+    new LinearRegerssion().setLabelCol("y") // эстиматор
+  )
+)
+
+val model = pipeline.fit(df)
+val w = model.stages.last
+  .asInstanceOf[LinearRegressionModel].coefficients
+// w: org.apache.spark.ml.linalg.Vector = [0.5000000000000163,-0.09999999999999584,0.20000000000000076]
+
+val pred = model.transform(df)
+\end{lstlisting}
+
+Здесь модель линейной регрессии принимает на вход вектор с именем \texttt{"features"} и целевой вектор \texttt{"y"}, на который мы указываем с помощью \texttt{setLabelCol("y")}.
+
+ВАЖНО: здесь \texttt{model} это не линейная регрессия, а конвейер, в котором модель линейной регрессии лежит на последнем этапе.
+
+Метод \texttt{transform} возвращает объект, у которого будет два новых поля (\texttt{features} и \texttt{prediction}). Поле \texttt{features} добавил \texttt{VectorAssembler}, когда собирал данные. Поле \texttt{prediction} очевидно добавила модель в качестве прогноза.
+
+ВАЖНО: если сейчас посмотреть на схему данных \texttt{pred}, то она будет выглядеть примерно так
+\begin{lstlisting}[
+style = bash,
+numbers = none
+]
+root
+  |-- x1: double (nullable = false)
+  |-- x2: double (nullable = false)
+  |-- x3: double (nullable = false)
+  |-- y: double (nullable = false)
+  |-- features: vector (nullable = true) # <-- потеряли информацию о природе признаков
+  |-- pred: double (nullable = false)
+\end{lstlisting}
+
+В глубоких конвейерах могут возникнуть сложности из-за потери информации о природе признаков, например, на этапе построения интерпретации. 
+
+В Spark есть свой собственный тип векторов и матриц (это не то же самое, что векторы и матрицы Breeze)
+\begin{itemize}
+	\item Vector:
+	\begin{itemize}
+		\item DenseVector,
+		
+		\item SparsVector
+	\end{itemize}
+
+    \item Matrix
+    \begin{itemize}
+    	\item DenseMatrix,
+    	
+    	\item SparseMatrix (CSC)
+    \end{itemize}
+\end{itemize}
+
+Есть метод \texttt{compressed}, который в зависимости от структуры вектора/матрицы принимает решение о том, в каком виде имеет смысл хранить данные (в полносвязанном или в разреженном).
+
+Для сложных преобразований можно превратить spark-вектор/матрицу в breeze-вектор/матрицу с помощью \texttt{asBreeze}.
+
+Извлечение атрибутов
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import org.apache.spark.ml.attribute.AttributeGroup
+
+AttributeGroup.fromStructField(pred.schema("features"))
+  .attributes.get.foreach(println)
+// Вывод
+{"type":"numeric","idx":0,"name":"x1"}
+{"type":"numeric","idx":1,"name":"x2"}
+{"type":"numeric","idx":2,"name":"x3"}
+\end{lstlisting}
+
+Для модульного тестирования используется ScalaTest \url{https://www.scalatest.org/user_guide}.
+
 
 
 \section{Приемы работы со Spark в Apache Zeppelin}
