@@ -1322,6 +1322,241 @@ AttributeGroup.fromStructField(pred.schema("features"))
 Для модульного тестирования используется ScalaTest \url{https://www.scalatest.org/user_guide}.
 
 
+\section{Оптимизация гиперпараметров и AutoML}
+
+Есть интересное расширение для \texttt{Spark ML} под именем \texttt{PravdaML}. Это расширение добавляет гибкости в вопросах организации потока данных, повышает коэффициент утилизации ресурсов и улучшения масштабирования ML.
+
+\section{Apache Zookeeper}
+
+\subsection{Общие сведения}
+
+{Apache Zookeeper} -- это сервис распределенной координации -- централизованная служба для поддержки информации о конфигурации, обеспечения распределенной синхронизации и предоставления групповых служб. Все эти виды услуг используются в той или иной форме распределенными приложениями.
+
+В конце сеанса следует:
+\begin{itemize}
+	\item Остановить продюсер, консамер с помощью \texttt{Ctrl-C},
+	
+	\item Остановить Kafka с помощью \texttt{Ctrl-C},
+	
+	\item Остановить ZooKeeper с помощью \texttt{Ctrl-C}.
+\end{itemize}
+
+Основные свойства Zookeeper:
+\begin{itemize}
+	\item пространство ключей образует дерево (иерархию, подобную файловой системе),
+	
+	\item значения могут содержаться в любом узле иерархии, а не только в листьях (как если бы файлы одновременно были бы и каталогами), узел иерархии называется znode,
+	
+	\item между клиентом и сервером двунаправленная связь, следовательно, клиент может подписываться как изменение конкретного значения или части иерархии,
+	
+	\item возможно создать временную пару ключ/значение, которая существует, пока клиент, ее создавший, подключен к серверу,
+	
+	\item все данные должны помещаться в память,
+	
+	\item устойчивость к смерти некритического количества узлов кластера.
+\end{itemize}
+
+\subsection{Установка и запуск Zookeeper}\label{subsec:zookeeper}
+
+Чтобы установить Zookeeper на MacOS следует с официального сайта проекта скачать tar-архив \url{https://www.apache.org/dyn/closer.lua/zookeeper/zookeeper-3.6.2/apache-zookeeper-3.6.2-bin.tar.gz} и распаковать его, например, в поддиректорию \texttt{zookeeper} домашней директории
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+tar -xvzf apache-zookeeper-3.6.2-bin &&\
+mv apache-zookeeper-3.6.2 zookeeper-3.6.2
+\end{lstlisting}
+
+Затем нужно в конфигурационном файле командной оболочки \texttt{.bashrc}, \texttt{.zshrc} создать переменную окружения \texttt{ZOOKEEPER\_HOME}
+\begin{lstlisting}[
+title = {\sffamily \~{}/.zshrc},
+style = bash,
+numbers = none	
+]
+export ZOOKEEPER_HOME="/Users/leor.finkelberg/zookeeper/zookeeper-3.6.2/bin"
+export PATH="$ZOOKEEPER_HOME:${PATH}"
+\end{lstlisting}
+
+Кроме того необходимо переименовать файл \texttt{zoo\_sample.cfg} в \texttt{zoo.cfg}, а затем заменить значение по умолчанию параметра \texttt{dataDir} на следующее \url{https://zookeeper.apache.org/doc/current/zookeeperStarted.html}
+\begin{lstlisting}[
+title = {\sffamily \~{}/zookeeper/zookeeper-3.6.2/conf},
+style = bash,
+numbers = none	
+]
+# каталог data должен существовать, иначе Zookeeper не сможет запустить сервер
+dataDir=~/zookeeper/zookeeper-3.6.2/data
+\end{lstlisting}
+Остальные два параметра минимальной конфигурации -- \texttt{tickTime} и \texttt{clientPort} -- оставим без изменений.
+
+Теперь можно запустить ZooKeeper
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+zkServer.sh start 
+\end{lstlisting}
+
+Описанные выше шаги запускают ZooKeeper в автономном режиме. В этом случае не поддерживается репликация и если процесс упадет, то служба выйдет из строя. Такой схемы достаточно для большинства ситуаций, но все же, если требуется запустить ZooKeeper с поддержкой репликации, то следует ознакомиться с \url{https://zookeeper.apache.org/doc/current/zookeeperStarted.html#sc_RunningReplicatedZooKeeper}.
+
+Далее устанавливаем соединение с ZooKeeper
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+zkCli.sh -server 127.0.0.1:2181
+\end{lstlisting}
+
+Теперь нужно подготовить запуск Apache Kafka. Предварительно бинарные файлы можно скачать здесь \url{https://kafka.apache.org/downloads}.
+
+Перед запуском Kafka следует указать куда будут писаться логи. Сделать это можно, изменив значение параметра \texttt{log.dirs} в файле \texttt{server.properties}
+\begin{lstlisting}[
+title = {\sffamily \~{}/kafka/kafka\_2.13-2.7.0/config/server.properties},
+style = bash,
+numbers = none
+]
+log.dirs=~/kafka/kafka_2.13-2.7.0/kafka-logs
+\end{lstlisting}
+и здесь же правим файл \texttt{zookeeper.properties}
+\begin{lstlisting}[
+title = {\sffamily \~{}/kafka/kafka\_2.13-2.7.0/config/zookeeper.properties},
+style = bash,
+numbers = none	
+]
+dataDir=~/kafka/kafka_2.13-2.7.0/zookeeper-data
+\end{lstlisting}
+
+А вот теперь можно запускать kafka-сессию
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+./kafka-server-start.sh ~/kafka/kafka_2.13-2.7.0/config/server.properties
+\end{lstlisting}
+
+Для создания топика используем следующий сценарий командной оболочки
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+./kafka-topics.sh --create --topic quickstart-events --bootstrap-server localhost:9092
+# Created topic quickstart-events.
+\end{lstlisting}
+
+Посмотреть описание топика можно следующим образом
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+./kafka-topics.sh --describe --topic quickstart-events --bootstrap-server localhost:9092
+\end{lstlisting}
+
+Клиент Kafka общается с брокерами сообщений через сеть для записи (или чтения) событий. Получив сообщение брокеры будут хранить его так долго, как это нужно. Запустим клиент продюсера, чтобы записать в топик несколько событий
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+# запись некоторых событий в топик
+./kafka-console-producer.sh --topic quickstart-events --bootstrap-server localhost:9092
+>This is my first event
+>This is my second events
+>^C% # Ctrl-C
+\end{lstlisting}
+
+Теперь можно открыть еще один терминал и прочитать переданные в топик события
+\begin{lstlisting}[
+style = bash,
+numbers = none
+]
+# чтение событий из топика
+./kafka-console-consumer.sh --topic quickstart-events --from-beginning --bootstrap-server localhost:9092
+# Ctrl-C
+\end{lstlisting}
+
+Остановить ZooKeeper можно так
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+zkServer.sh stop
+\end{lstlisting}
+
+
+
+
+\section{Apache Kafka}
+
+\subsection{Установка и запуск Kafka}
+
+ВАЖНО: перед запуском Kafka следует запустить ZooKeeper (см.~\ref{subsec:zookeeper}).
+
+Apache Kafka -- брокер сообщений, работающий поверх сервиса Apache Zookeeper.
+
+Простая схема: создается топик (тема), в которую будут отправляться сообщения от продюсеров, и на которую смогут подписаться консьюмеры, чтобы их получать.
+
+
+
+\section{Пакетная и потоковая обработка данных}
+
+Пакетная обработка -- обработка всего за раз без взаимодействия с конечным пользователем. Задача выполняется однократно или по расписанию, тригеру и пр.
+
+Инструменты \emph{пакетной} обработки:
+\begin{itemize}
+	\item Spark -- стандарт в этой области,
+	
+	\item Flink -- псевдо-batch,
+	
+	\item Hive -- когда знаешь только SQL.
+\end{itemize}
+
+Инструменты \emph{потоковой} обработки:
+\begin{itemize}
+	\item Spark Streaming -- микробатчи,
+	
+	\item Flink -- реальный стириминг,
+	
+	\item Kafka Streams -- Kappa-архитектура.
+\end{itemize}
+
+Apache Kafka -- это быстрая, масштабируемая, надежная и отказоустойчивая система обмена сообщениями по механизму публикация-подписка. Еще можно сказать, что Kafka это распределенная потоковая платформа.
+
+Если упрощенно, то Kafka предназначена для организации обмена сообщениями и результатами работы между микросервисами приложения.
+
+Kafka работает с другими распределенными фреймверками как Spark, Samza, Flink для анализа и визуализации потоковых данных в реальном времени. Kafka хорошо интегрируется с ML фреймверками для решения ML/AI задач на потоках.
+
+Основные определения:
+\begin{itemize}
+	\item Producer -- сервис, отправляющий сообщение,
+	
+	\item Consumer -- сервис, получающий данные,
+	
+	\item Broker -- один узел Kafka,
+	
+	\item Topic -- логическая очередь,
+	
+	\item Partition -- физическая часть очереди.
+\end{itemize}
+
+Обычно взаимодействие Kafka и Spark Streaming устроено следующим образом:
+\begin{itemize}
+	\item исходные данные записываются в топики Apache Kafka,
+	
+	\item приложение Spark Streaming считывает нужные данные и обрабатывает их согласно бизнес-логике,
+	
+	\item полученные результаты приложение Spark Streaming отправляет в место назначения -- новый топик Apache Kafka, озеро данных на базе Hadoop HDFS, аналитическую СУБД (HBase, Hive, Greenplum etc.) или BI-систему.
+\end{itemize}
+
+Топик состоит из партиций. Партиция упорядоченная и неизменяемая последовательность сообщений.
+
+Семантика доставки:
+\begin{itemize}
+	\item At most once -- сообщения могут потеряны, но никогда не будут доставлены повторно (не будет дубликатов),
+	
+	\item At least once -- сообщения никогда не теряются, но могут быть доставлены повторно (возможны дубликаты),
+	
+	\item Exactly once -- это то, чего на самом деле хотят люди; каждое сообщение доставляется только один раз.
+\end{itemize}
+
+
 
 \section{Приемы работы со Spark в Apache Zeppelin}
 
