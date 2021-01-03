@@ -1493,6 +1493,86 @@ Apache Kafka -- брокер сообщений, работающий повер
 
 Простая схема: создается топик (тема), в которую будут отправляться сообщения от продюсеров, и на которую смогут подписаться консьюмеры, чтобы их получать.
 
+\section{Apache HBase}
+
+HBase -- распределенная нереляционная (столбцово-ориентирования) база данных формата <<ключ-значение>>. 
+
+\subsection{Установка и запуск}
+
+Скачать tar-архив можно здесь \url{https://www.apache.org/dyn/closer.lua/hbase/2.4.0/hbase-2.4.0-bin.tar.gz}
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+curl -O https://apache-mirror.rbc.ru/pub/apache/hbase/2.4.0/hbase-2.4.0-bin.tar.gz
+\end{lstlisting}
+
+Теперь следует распоковать архив
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+tar -xvzf hbase-2.4.0...
+\end{lstlisting}
+перейти в директорию \directory{hbase-2.4.0} и задать путь до java в файле \texttt{hbase-env.sh}, раскоментировав нужную строку
+\begin{lstlisting}[
+title = {\sffamily conf/hbase-env.sh},
+style = bash,
+numbers = none	
+]
+export JAVA_HOME=/usr/local/Cellar/openjdk/15.0.1
+\end{lstlisting}
+
+В конфигурационном файле команданой оболочки удобно задать переменные окружения для Java и HBase
+\begin{lstlisting}[
+title = {\sffamily \~{}/.zshrc},
+style = bash,
+numbers = none	
+]
+# for HBase
+export JAVA_HOME="/usr/local/Cellar/openjdk/15.0.1"
+export PATH="${PATH}:/Users/leor.finkelberg/hbase/hbase-2.4.0/bin"
+\end{lstlisting}
+
+Диреткорию размещения java на MacOS X следует искать с помощью менеджера пакетов \texttt{brew}
+\begin{lstlisting}[
+style = bash,
+numbers = none
+]
+brew list java # /usr/local/Cellar/openjdk/15.0.1/bin/java
+\end{lstlisting}
+
+ВАЖНО: обновить java, можно скачав соответствующую версию с ресурса \url{https://www.oracle.com/java/technologies/javase-jdk15-downloads.html}.
+
+Запустить HBase можно с помощью сценария командной оболочки из \directory{bin/}
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+start-hbase.sh
+\end{lstlisting}
+
+Подключиться к запущенному экземпляру можно так
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+hbase shell
+\end{lstlisting}
+
+Для того чтобы убедиться, что процесс HMaster запущен можно воспользоваться утилитой~\texttt{jps}.
+
+Бывает удобно следить за работой приложения с помощью Web-интерфейса, доступного на \url{http://localhost:16010}.
+
+Закнчить сессию можно с помощью команды \texttt{quit}. Затем нужно остановить HBase
+\begin{lstlisting}[
+style = bash,
+numbers = none
+]
+stop-hbase.sh
+\end{lstlisting}
+
+
 
 
 \section{Пакетная и потоковая обработка данных}
