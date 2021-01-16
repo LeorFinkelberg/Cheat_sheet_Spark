@@ -414,6 +414,42 @@ sbt assembly
 	\item \texttt{cluster} -- драйвер, как и executors, запускается на \emph{кластере}.
 \end{itemize}
 
+\section{Пример использования группировки и аггрегации на Scala}
+
+Пример подсчета слов в файле
+\begin{lstlisting}[
+title = {\sffamily Не самый удачный вариант},
+style = scala,
+numbers = none	
+]
+> val lines = spark.read.text("file_name.txt")
+> val linesMap = lines.flatMap(_.mkString.split(" ")).map((_, 1))
+// после этой операции имена столбцов будут иметь вид "_1", "_2" и т.д.
+// чтобы переименовать столбцы придется воспользоваться следующей конструкцией
+> val renameCols = Map("_1" -> "Language", "_2" -> "Numbers")
+> val linesMapRen = linesMap
+     .select(linesMap.columns.map(c => col(c)
+     .as(renameCols.getOrElse(c, c))): _*)
+> val wordCounts = linesMapRen.groupBy("Language").agg(sum("Counts"))
+> wordCounts.show
+\end{lstlisting}
+
+Тоже самое одним запросом с фильтрацией по числу слов
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+linesMap
+  .select(
+    linesMap.columns.map(
+      c => col(c).as(renameCols.getOrElse(c, c))
+    ): _*  // обязательно распоковать
+  )
+  .groupBy("Language")
+  .agg(sum("Counts"))
+  .where($"sum(Counts)" === 2)
+  .show
+\end{lstlisting}
 
 
 \section{Создание Spark DataFrame на основе списка}
