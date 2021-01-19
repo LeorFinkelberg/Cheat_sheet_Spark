@@ -451,6 +451,15 @@ linesMap
   .show
 \end{lstlisting}
 
+К слову, переименовать столбцы в объекте DataFrame можно и проще 
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val df = ...  // "_1", "_2", "_3"
+val dfRenamed = df.toDF("newName1", "newName2", "newName3")
+\end{lstlisting}
+
 
 \section{Создание Spark DataFrame на основе списка}
 
