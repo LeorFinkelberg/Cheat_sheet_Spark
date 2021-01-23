@@ -9,7 +9,7 @@
 
 
 \begin{document}
-\title{Базовый курс Spark в реализациях на Scala и Python}
+\title{Полезные конструкции Spark\\в реализациях на Scala и Python}
 
 \author{}
 
@@ -1365,6 +1365,68 @@ AttributeGroup.fromStructField(pred.schema("features"))
 \end{lstlisting}
 
 Для модульного тестирования используется ScalaTest \url{https://www.scalatest.org/user_guide}.
+
+
+\section{Запросы к DataFrame с помощью методов и SQL}
+
+Пример запроса к объекту DataFrame с использованием методов
+\begin{lstlisting}[
+title = {\sffamily Scala},
+style = scala,
+numbers = none	
+]
+> val df = spark.read.option("header", "true").csv("file_name.csv")
+> df.show(3)
+//+------------+-------+----+----------+
+//|state/region|   ages|year|population|
+//+------------+-------+----+----------+
+//|          AL|under18|2012|   1117489|
+//|          AL|  total|2012|   4817528|
+//|          AL|under18|2010|   1130966|
+//+------------+-------+----+----------+
+//only showing top 3 rows
+> df.select($"ages", $"year").filter(
+  $"year" > 2010 && $"state/region" === "AL"
+).orderBy($"year").show
+\end{lstlisting}
+
+Тот же самый запрос, но с использованием SQL
+\begin{lstlisting}[
+title = {\sffamily Scala},
+style = scala,
+numbers = none	
+]
+> df.createOrReplaceTempView("state_population")
+spark.sql(
+  "SELECT ages, year FROM state_population WHERE year > 2010 and `state/region` = \"AL\" ORDER BY 2;"
+).show
+\end{lstlisting}
+
+В pandas этот запрос выглядел был так
+
+\begin{lstlisting}[
+title = {\sffamily Python},
+style = ironpython,
+numbers = none	
+]
+> df = pd.read_csv("file_name.csv", header=0)
+> df[["ages", "year"]][
+    (df["year"] > 2010) & (df["state/region"] == "AL")
+].sort_values("year")
+\end{lstlisting}
+
+Или так
+\begin{lstlisting}[
+title = {\sffamily Python},
+style = ironpython,
+numbers = none	
+]
+df.query(
+    "year > 2010 & `state/region` == 'AL'"
+)[["ages", "year"]].sort_values("year")
+\end{lstlisting}
+
+
 
 
 \section{Оптимизация гиперпараметров и AutoML}
