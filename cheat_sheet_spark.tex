@@ -1426,6 +1426,47 @@ df.query(
 )[["ages", "year"]].sort_values("year")
 \end{lstlisting}
 
+Еще пример с использованием эквивалента конструкции \texttt{CASE WHEN}
+\begin{lstlisting}[
+title = {\sffamily Scala},
+style = scala,
+numbers = none	
+]
+df.select(// список выборки
+  $"ages",
+  when($"ages" === "under18", 0).
+  when($"ages" === "total", 1).
+  otherwise(2).as("encodedCol"),
+  $"year"
+).filter(
+      $"year" > 2010 && $"state/region" === "AL"
+    ).show
+//+-------+----------+----+
+//|      ages|encodedCol|year|
+//+-------+----------+----+
+//|under18| 0|2012|
+//|total| 1|2012|
+\end{lstlisting}
+
+Или, используя SQL
+\begin{lstlisting}[
+title = {\sffamily Scala},
+style = scala,
+numbers = none	
+]
+spark.sql(
+  "SELECT
+      ages,
+      CASE WHEN (ages = \"under18\") THEN 0
+           WHEN (ages = \"total\") THEN 1
+           ELSE 2 END AS encodedCol,
+      year
+    FROM state_population
+    WHERE year > 2010 and `state/region` = \"AL\"
+    ORDER BY 3;"
+ ).show
+\end{lstlisting}
+
 
 
 
