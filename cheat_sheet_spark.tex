@@ -111,6 +111,16 @@ In[]: spark = (
 	\item а scala-скрипт -- по пути \directory{src > main > scala > AppFileName.scala}.
 \end{itemize}
 
+Scala-сценарий может лежать и <<глубже>>, например, в \directory{src > main > scala > com > clairvoyant > insight > bigdata}, но тогда в scala-сценарии нужно будет нестандартный путь описать как пакет
+\begin{lstlisting}[
+title = {\sffamily сценарий.scala},
+style = scala,
+numbers = none	
+]
+package com.clairvoyant.insight.bigdata
+...
+\end{lstlisting}
+
 Теперь можно упаковать приложение
 \begin{lstlisting}[
 style = bash,
@@ -1667,6 +1677,30 @@ df.select("fare_amount", "prediction").show(5)
 val rmse = evaluator.evaluate(df)
 spark.close()
 \end{lstlisting}
+
+
+\section{Spark Streaming и Kafka}
+
+Простой пример подписки на один топик
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val df = spark
+  .readStream
+  .format("kafka")
+  .option("kafka.bootstrap.servers", "localhost:9092")
+  .option("subscribe", "quickstart-events") // <-
+  .load()
+  
+df.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)")
+  .writeStream
+  .outputMode("append")
+  .format("console")
+  .start().awaitTermination()
+\end{lstlisting}
+
+
 
 \section{Распределенное глубокое обучение с Elephas}
 
