@@ -733,6 +733,8 @@ Out[]:
 
 \section{Оконные функции в контексте SQL и Spark DataFrame}
 
+\subsection{Базовые понятия оконных преобразований в PySpark}
+
 \texttt{Spark SQL} поддерживает три вида оконных функций (см. \tblref{tab:sql_df_api}):
 
 \begin{itemize}
@@ -1180,6 +1182,94 @@ Out[]:
 +----------+----------+-------+------------+
 \end{lstlisting}
 
+\subsection{Оконные преобразования в Spark на Scala}
+
+Чтобы использовать функцию как оконную требуется лишь: 1) задать спецификацию окна  и 2) вызвать метод \texttt{over} на функции, которую нужно сделать \emph{оконной}, и передать спецификацию окна как аргумент этому методу.
+
+Затем, например, с помощью метода \texttt{withColumn} создаем новый столбец по шаблону
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val windowSpec = Window.partitionBy(...).orderBy(...).rowsBetween(-2, 2) // например!
+df.withColumn("colName", function().over(windowSpec))
+\end{lstlisting}
+
+Простой пример
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import spark.implicits._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.expressions.Window // NB
+
+// описываем спецификацию окна
+val windowSpec = Windos.partitionBy("department").orderBy("salary")
+// создаем новый столбец row_number
+df.withColumn(
+  "row_number",
+  row_number().over(windowSpec) // метод over делает функцию оконной
+).show
+\end{lstlisting}
+
+Если нужно сместить вниз в пределах группы отсортированный набор элементов этой группы, то можно воспользоваться функцией \texttt{lag} (функция \texttt{lead} смещает вверх)
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.withColumn(
+  "lag",
+  lag("salary", 2).over(windowSpec)
+).show
+\end{lstlisting}
+
+Можно использовать несколько спецификаций окна в одном запросе
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+// описываем новую спецификацию окна
+val windowSpecAgg = Window.partitionBy("department") // для агрегатов не нужно указывать orderBy
+
+df.withColumn(
+  "row",
+   row_number().over(windowSpec)
+).withColumn(
+  "avg", 
+   avg($"salary").over(windowSpecAgg)
+).withColumn(
+  "sum",
+   sum($"salary").over(windowSpecAgg)
+).select("department", "avg", "sum").show
+\end{lstlisting}
+
+Естественно можно оперировать вычисленными столбцами через, например, \texttt{withColumn}
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.withColumn(
+  "avgWinSalary",
+   avg($"salary").over(windowSpec) // оконная функция
+).withColumn(
+   "diffSalary",
+   $"salary" - $"avgWinSalary" // вычисляем разницу
+).show
+\end{lstlisting}
+
+Можно использовать результаты динамических вычислений
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.withColumn(// создаем новый столбец
+  "diff",
+   $"salary" - avg($"salary").over(windowSpec) // оконная функция
+).show
+\end{lstlisting}
+
+
 \section{Работа с файловой системой Databricks}
 
 Databricks \url{https://databricks.com/product/unified-data-analytics-platform} -- это платформа для анализа больших данных, построенная вокруг Apache Spark. DBFS -- распределенная файловая система Databricks.
@@ -1411,6 +1501,8 @@ AttributeGroup.fromStructField(pred.schema("features"))
 
 \section{Запросы к DataFrame с помощью методов и SQL}
 
+\subsection{Простые примеры}
+
 Пример запроса к объекту DataFrame с использованием методов
 \begin{lstlisting}[
 title = {\sffamily Scala},
@@ -1508,6 +1600,45 @@ spark.sql(
     ORDER BY 3;"
  ).show
 \end{lstlisting}
+
+
+\subsection{Использование сложных агреграций}
+
+Вычислить простые агрегаты можно так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.agg(countDistinct("department")) // число уникальных значений в столбце
+df.agg(min("salary")) // минимальное значение столбца
+\end{lstlisting}
+
+Если требуется в одном запросе по сгруппированным данным вычислить и, скажем, среднее, и максимальное значение, то можно воспользоваться следующей конструкцией
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+import spark.implicits._ // NB
+import org.apache.spark.sql.functions._
+
+df.groupBy("department").agg(
+  avg("salary").as("avgSalary"),
+  min("bonus").as("minBonus"),
+  max("bonus").as("maxBonus")
+).show
+
+// подсчитать число элементов в каждой группе
+df.groupBy("state").agg(
+  count("salary").as("countSalary")
+).show
+\end{lstlisting}
+
+
+
+
+
+
+
 
 \section{Случайный лес в Spark}
 
