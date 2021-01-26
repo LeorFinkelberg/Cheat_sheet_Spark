@@ -502,6 +502,75 @@ val df = ...  // "_1", "_2", "_3"
 val dfRenamed = df.toDF("newName1", "newName2", "newName3")
 \end{lstlisting}
 
+Или так (пожалуй это самый естественный способ)
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+val dfRenamed = df.withColumnRenamed("oldName", "newName")
+\end{lstlisting}
+
+\section{Приемы работы со объектами Spark DataFrame}
+
+Пусть есть набор данных
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// читаем в объект DataFrame
+val df = spark.read.option("header", "true").csv("state-population.csv")
+// выводим схему
+df.printSchema
+// root
+//  |-- state: string (nullable = true)
+//  |-- ages: string (nullable = true)
+//  |-- year: string (nullable = true)
+//  |-- population: string (nullable = true)
+\end{lstlisting}
+
+Теперь пусть требуется вывести столбцы <<year>> и <<population>> с фильтрацией по столбцам <<state>> и <<year>> и упорядочить по столбцу <<year>>
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.select($"year", $"population")\\
+  .where($"state" === "AL" && $"year" > 2010)
+  .orderBy($"year")
+  .show
+\end{lstlisting}
+
+Можно еще зарегистрировать DataFrame-объект как таблицу и получить тот же самый результат с помощью SQL-запроса
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.createOrReplaceTempView("state_population")
+spark.sql(
+  "SELECT year, population FROM state_population WHERE state = \"AL\" and year > 2010 ORDER BY 1;"
+).show
+\end{lstlisting}
+или с логической разбивкой по строкам
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+spark.sql(
+  "SELECT year, population " +
+  "FROM state_population " +
+  "WHERE state = \"AL\" and year > 2010 " +
+  "ORDER BY 1"
+).show
+\end{lstlisting}
+
+К слову на Pandas эта задача решалась бы так
+\begin{lstlisting}[
+style = ironpython,
+numbers = none	
+]
+df[(df["year"] > 2010) & (df["state"] == "AL")][["year", "population"]].sort_values("year")
+# или с помощью метода query
+df.query("year > 2010 & state == 'AL'")[["year", "population"]].sort_values("year")
+\end{lstlisting}
 
 \section{Создание Spark DataFrame на основе списка}
 
@@ -1678,8 +1747,130 @@ val rmse = evaluator.evaluate(df)
 spark.close()
 \end{lstlisting}
 
+\section{Простой пример использования Kafka и программная реализация на Scala}
+
+Для начала следует добавить зависимость Kafka в проект
+\begin{lstlisting}[
+	title = {\sffamily build.sbt},
+	style = scala,
+	numbers = none	
+	]
+	name := "hellokafka"
+	
+	version := "0.1"
+	
+	scalaVersion := "2.12.12"
+	
+	libraryDependencies += "org.apache.kafka" %% "kafka" % "2.5.0"
+\end{lstlisting}
+
+Теперь в IntelliJ IDEA можно создать простую связку <<продюсер-консьюмер>>. Как обычно начинаем с создания проекта: \menu{File > New > Project}. Задаем имя проекта (например, <<hellokafka>>), выбираем нужную версию Scala и запускаем процедуру создания проекта (занимает некоторое время).
+
+В директории \directory{hellokafka > src > main > scala} создаем поддиректорию \directory{hellokafka} (в терминах IDEA \emph{пакет}\footnote{Package}). В этом пакете \texttt{hellokafka} создаем два scala-сценария (в терминах IDEA Package Object): \texttt{MainProducer.scala} и \texttt{MainConsumer.scala}.
+
+\begin{lstlisting}[
+title = {\sffamily MainProducer.scala},
+style = scala,
+numbers = none
+]
+package hellokafka
+
+import java.util.Properties
+import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
+
+
+object MainProducer extends App {
+	val props = new Properties()
+	
+	props.put("bootstrap.servers", "localhost:9082,localhost:9083")
+	// нужны сериализаторы
+	props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer")
+	props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer")
+	
+	val topic = "welcome" // название топика
+	
+	val producer = new KafkaProducer[String, String](props)
+	
+	for (i <- 1 to 1000) {
+		Thread.sleep(5000)
+		println(s"sent { message : $i }")
+		producer.send(new ProducerRecord[String, String](topic, s"key $i", s"message $i"))
+	}
+}
+\end{lstlisting}
+
+\begin{lstlisting}[
+title = {\sffamily MainConsumer.scala},
+style = scala,
+numbers = none	
+]
+package hellokafka
+
+import java.util.Properties
+import org.apache.kafka.clients.consumer.KafkaConsumer
+
+import scala.collection.JavaConverters._
+
+object MainConsumer extends App {
+	val props = new Properties()
+	
+	// bootstrap-серверы -- это серверы, через которые можно подключиться к кластеру
+	props.put("bootstrap.servers", "localhost:9082,localhost:9083")
+	// нужны десериализаторы
+	props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
+	props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
+	props.put("group.id", "rescuer") // консьюмеры потребляет через группы
+	
+	val topic = "welcome"
+	
+	val consumer = new KafkaConsumer[String, String](props)
+	
+	consumer.subscribe(java.util.Collections.singleton(topic))
+	
+	while (true) {
+		val records = consumer.poll(java.time.Duration.ofSeconds(12))
+		for (record <- records.asScala) {
+			println(s"${record.timestamp()} : ${record.value()}")
+		}
+	}	
+}
+\end{lstlisting}
+
+Теперь остается запустить связку:
+\begin{enumerate}
+	\item Запустить сервер ZooKeeper (см. \ref{subsec:zookeeper}),
+	
+	\item Установить соединение с сервером ZooKeeper,
+	
+	\item Запустить сервер Kafka (см. \ref{sec:kafka}),
+	
+	\item Запустить сценарий \texttt{MainProducer.scala} (кликнув правой кнопкой мыши по файлу и выбрав <<Run 'MainProducer'>>),
+	
+	\item Запустить сценарий \texttt{MainConsumer.scala} (кликнув правой кнопкой мыши по файлу и выбрав <<Run 'MainConsumer'>>),
+	
+	\item В завершении работы следует остановить продюсер, затем консьюмер, потом сессию Kafka (\texttt{Ctrl+C}) и, наконец, сессию ZooKeeper (\texttt{Ctrl+C}),
+	
+	\item Дополнительно следует вызывать сценарий \texttt{zkServer.sh stop}.
+\end{enumerate}
+
+В итоге проект должен иметь структуру, приведенную на \pic{fig:idea_kafka_scala_schema}.
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[scale=0.95]{figures/idea_kafka_scala_schema.png}
+	\caption{ Структура проекта hellokafka }\label{fig:idea_kafka_scala_schema}
+\end{figure}
+
+
+
+
+
+
 
 \section{Spark Streaming и Kafka}
+
+
+Затем (в самом простом варианте) следует создать продюсер (т.е. сервис порождающий данные) и консьюмер (т.е. сервис потребляющий данные).
 
 Простой пример подписки на один топик
 \begin{lstlisting}[
@@ -1762,6 +1953,43 @@ spark = pyspark.sql.SparkSession.builder.appName("MyApp") \
 import mmlspark
 \end{lstlisting}
 
+\section{Структурный и непрерывный стриминг}
+
+Чем больше интервал пакетирования (размер батча), тем лучше (от нескольких миллисекунд до нескольких минут или даже часов).
+
+Можно выделить три основных режима: 
+\begin{itemize}
+	\item микробатчевый режим (обычный DStream),
+	
+	\item структурированный микробатчевый,
+	
+	\item структурированный непрерывный.
+\end{itemize}
+
+Различают следующие модели:
+\begin{itemize}
+	\item Spark Streaming (DStream, микробатчевый режим) (не развивается!): это абстракция высокого уровня, называемая \emph{дискретным потоком} (DStream); представлен как последовательность RDD,
+	
+	\item Structured Streaming: передача не материализует всю таблицу сразу. Можно работать как с реляционной таблицей, которая обновляется в реальном времени. Structured Streaming считывает последние доступные данные из источника потоковых данных, обрабатывает их постепенно для обновления таблицы результатов, а затем отбрасывает первые данные. В этой модели Spark отвечает за обновление таблицы результатов при появлении новых данных. Не нужно думать об абстрактной ширине окна и т.д. как в случае DStream. 
+\end{itemize}
+
+Пример \emph{потокового запроса} (Streaming Query)
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+events.where("state = CA").groupBy(window("time", "30 seconds")).avg("latency")
+\end{lstlisting}
+
+Области применения фреймверков:
+\begin{itemize}
+	\item Большой поток, простой агрегат: Spark,
+	
+	\item Быстрая реакция, сложный агрегат (поиск аномалий во входящих данных с датчиков): Flink,
+	
+	\item Минимум зависимостей, деплой в Kubernetes (микро-сервис, считающий статистику в реалтайме): Kafka
+\end{itemize}
+
 
 \section{Оптимизация гиперпараметров и AutoML}
 
@@ -1820,7 +2048,7 @@ export PATH="$ZOOKEEPER_HOME:${PATH}"
 
 Кроме того необходимо переименовать файл \texttt{zoo\_sample.cfg} в \texttt{zoo.cfg}, а затем заменить значение по умолчанию параметра \texttt{dataDir} на следующее \url{https://zookeeper.apache.org/doc/current/zookeeperStarted.html}
 \begin{lstlisting}[
-title = {\sffamily \~{}/zookeeper/zookeeper-3.6.2/conf},
+title = {\sffamily \~{}/zookeeper/zookeeper-3.6.2/conf/zoo.cfg},
 style = bash,
 numbers = none	
 ]
@@ -1924,7 +2152,7 @@ zkServer.sh stop
 
 
 
-\section{Apache Kafka}
+\section{Apache Kafka}\label{sec:kafka}
 
 \subsection{Установка и запуск Kafka}
 
@@ -1933,6 +2161,84 @@ zkServer.sh stop
 Apache Kafka -- брокер сообщений, работающий поверх сервиса Apache Zookeeper.
 
 Простая схема: создается топик (тема), в которую будут отправляться сообщения от продюсеров, и на которую смогут подписаться консьюмеры, чтобы их получать.
+
+\subsection{Общие сведения}
+
+Очень полезное видео \url{https://www.youtube.com/watch?v=m5CDfrQLzrs}.
+
+Очень полезный ресурс, на котором обсуждаются тонкие вопросы по работе с Kafka, которых нет даже в документации: \url{https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Improvement+Proposals}.
+
+Kafka -- брокер сообщений. Основная задача -- это доставка сообщений от продюсеров (сервисы, порождающие данные) до консьюмеров (сервисы, потребляющие данные).
+
+Кластер Kafka почти всегда состоит из \emph{нод}, которые называют \emph{брокерами}, а координация между нодами осуществляется с помощью демона Zookeeper (см. \pic{fig:base_schema_kafka}).
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[scale=0.55]{figures/base_schema_kafka.png}
+	\caption{ Базовая схема кластера Kafka }\label{fig:base_schema_kafka}
+\end{figure}
+
+Данные в Kafka разбиты по \emph{топикам} и каждый топик состоит из определенного числа \emph{партиций}. Топик находится на брокере. Партиция -- основная единица хранения данных в Kafka. Именно в партициях хранятся данные. Топик -- это логический контейнер вокруг партиции. Каждая партиция -- неизменяемая последовательность записей.
+
+Продюсер может записывать данные только в конец очереди и никак не может повлиять на уже записанные данные (не может ни удалить, ни изменить). Каждому сообщению присваивается уникальный в пределах партиции порядковый номер (называет offset).
+
+Как читать:
+\begin{itemize}
+	\item указываем потребителю топик, указываем номер партиции и указываем offset, с которого надо начать читать. Когда партиция исчерпается, потребитель будет ждать новых сообщений (в этом случае нужно вне Kafka запоминать offset),
+	
+	\item можно создать группу (groupId) и тогда Kafka будет сама следить за offset.
+\end{itemize}
+
+Продюсер \underline{всегда} пишет в \emph{лидер} (это брокер, т.е. узел кластера Kafka). Консьюмеры читают тоже с лидера (реплики нужны для подстраховки, т.е. если с лидером что-то происходит, то они займут его место).
+
+Для одних партиций какой-то брокер является лидером, а для других он будет репликой!!!
+
+ВАЖНО: даже после того как сообщение будет записано продюсером в лидер, оно не будет сразу же доступно для чтения консьюмерам. Сообщение будет доступно для чтения только после того как это сообщение <<подтянут>> \underline{все} реплики!!! Обойти это в Kafka нельзя. То есть нельзя сказать, например, что <<пусть сообщение считается доступным сразу после того как будет записано в лидер>>.
+
+Данные пишутся со скоростью самого медленного брокера.
+
+Для увеличения скорости записи, можно уменьшить значение параметра \texttt{replica.fetch.wait.max.ms} (это временной интервал, через который брокер-реплика будет опрашивать брокер-лидера). По умолчанию стоит 500 мс. Можно уменьшить до 200 мс.
+
+Важный конфигурационный параметр -- \texttt{acks} (тип подтверждения, который будут получать от лидера при записи данных):
+\begin{itemize}
+	\item \texttt{acks=0}: не ждем никакого подтверждения; очень вероятна потеря сообщений (мы об этом никогда не узнаем); не подходит для важных данных,
+	
+	\item \texttt{acks=1}: ждем подтверждение только от лидера, что он записал у себя сообщение; не подходит для важных данных,
+	
+	\item \texttt{acks=-1}: ждем подтверждение от всех реплик (подходит). 
+\end{itemize}
+
+Параметр \texttt{replica.max.lag.ms=10000} (10 сек!): если реплика выпала, лидер будет ожидать ее 10 сек (это очень долго!!!). Можно уменьшить до 1 сек.
+
+Параметр \texttt{min.insync.replicas} (очень важный параметр!!!) определяет минимальное число реплик в статусе \texttt{insync} (включая лидера), которое необходимо для успешной записи. По умолчанию стоит 1, но практичнее выставить 2. Этот параметр работает только для \texttt{acks=-1}.
+
+Чтобы принудительно назначить брокер-реплику со статусом <<out of sync>> лидером, нужно в настройках топика задать \texttt{unclean.leader.election.enable=true}. Этот параметр бывает нужен, когда требуется что-то починить. В Kafka >=2.0.0 можно изменять динамически. Без понимания работы этого параметра лучше оставить значение по умолчанию, т.е. \texttt{false}.
+
+Для того чтобы обеспечить и доступность и надежность в кластере из 3 брокеров следует использовать фактор репликации \texttt{Rf=3}, а \texttt{minISR=2}. В этом случае может возникнуть сложности с производительностью (в случае, если один из брокеров выпадет, нагрузка на оставшиеся может быть значительной со всеми вытекающими последствиями).
+
+Иногда рекомендуют строить кластер из 5 брокеров (см. \pic{fig:cluster5brokers}): можно использовать \texttt{Rf=3}, \texttt{minISR=2}.
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[scale=0.55]{figures/cluster5brokers.png}
+	\caption{ Доступность и надежность кластера из 5 брокеров }\label{fig:cluster5brokers}
+\end{figure}
+
+В 3 ноды Zookeeper в отдельном кластере.
+
+Выводы:
+\begin{itemize}
+	\item Kafka не автопилотируемый проект; за ней нужно постоянно следить,
+	
+	\item Надежная запись: \texttt{acks=-1} и \texttt{minISR > 2},
+	
+	\item Мониторинг + учения,
+	
+	\item Регулярные обновления,
+	
+	\item KIP и Jira очень полезны.
+\end{itemize}
+
 
 \section{Apache HBase}
 
