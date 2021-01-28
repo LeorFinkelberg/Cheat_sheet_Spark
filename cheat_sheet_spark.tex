@@ -572,7 +572,95 @@ df[(df["year"] > 2010) & (df["state"] == "AL")][["year", "population"]].sort_val
 df.query("year > 2010 & state == 'AL'")[["year", "population"]].sort_values("year")
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе списка}
+
+\section{Запись объектов Spark DataFrame}
+
+Если все данные хранятся в одном объекте DataFrame, то можно легко задать информацию о секционировании во время записи данных с помощью API класса \texttt{DataFrameWriter}. Функция \texttt{partitionBy} принимает в качестве параметра список столбцов, по которым необходимо секционировать результаты
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// пусть у DataFrame есть категориальный столбец solverType с двумя категориями direct и iterative
+data
+  .write
+  .partitionBy("solverType") // секционирование
+  .format("csv")
+  .save("output")
+\end{lstlisting}
+
+После этой операции в текущей директории будет создана поддиректория \directory{output} следующего содержания
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+$ ls -l output
+-rw-r--r--  1 leor.finkelberg  staff     0B 27 янв 19:47 _SUCCESS
+drwxr-xr-x  6 leor.finkelberg  staff   192B 27 янв 19:47 solverType=direct/
+drwxr-xr-x  4 leor.finkelberg  staff   128B 27 янв 19:47 solverType=iterative/
+$ ls -l output/solverType=direct
+-rw-r--r--  1 leor.finkelberg  staff    11B 27 янв 19:47 part-00001-66f80308-b856-4661-9e8f-d1ea8df84d1a.c000.csv
+-rw-r--r--  1 leor.finkelberg  staff     9B 27 янв 19:47 part-00003-66f80308-b856-4661-9e8f-d1ea8df84d1a.c000.csv
+$ cat output/solverType=direct/part-00001-66f80308-b856-4661-9e8f-d1ea8df84d1a.c000.csv
+Nastran,10
+\end{lstlisting}
+
+\section{Выбор элементов в DataFrame и Dataset}
+
+При выборе элементов коллекции Dataset с помощью метода \texttt{select} без указания типа полей возвращается объект DataFrame
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.select(
+  $"packageName",
+  $"solverType"
+) // org.apache.spark.sql.DataFrame
+\end{lstlisting}
+
+Если же указать тип поля при выборе, то будет возвращен объект Dataset
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.select(
+  $"packageName".as[String],
+  $"solverType".as[String]
+) // org.apache.spark.sql.Dataset[(String, String)]
+\end{lstlisting}
+
+И если выбирать поля из объекта DataFrame методом \texttt{select} без указания типа полей, то будет возвращет объект DataFrame. Если же указать тип полей, то вернется объект Dataset.
+
+К слову, у наборов Dataset отсутствуют простые агрегирующие функции типа \texttt{min}, \texttt{max} и т.п., поэтому задавать такие функции, следует через \texttt{agg}
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.groupBy("solverType").agg(
+  min("counts").as[Int].as("minCounts")
+)
+\end{lstlisting}
+
+
+\section{Создание объектов Spark DataFrame на Scala}
+
+Примеры создания объектов DataFrame на базе различных примитивных структур
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// Обычная коллекция кортежей
+val seqTuples = Seq(
+  ("Nastan", 10, "direct"),
+  ("Ansys", 20, "iterative")
+)
+
+seqTuples.toDF("packageName", "count", "solverType") // org.apache.spark.sql.DataFrame
+\end{lstlisting}
+
+
+\section{Создание объектов Spark DataFrame на Python}
+
+\subsection{Создание Spark DataFrame на основе списка}
 
 Создание объекта \texttt{Spark} \texttt{DataFrame} на основе списка
 
@@ -593,7 +681,7 @@ Out[]:
  Row(package_name='Comsole', solver='direct', price=45000)]
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе объекта RDD}
+\subsection{Создание Spark DataFrame на основе объекта RDD}
 
 Создание объекта \texttt{DataFrame} на основе объекта RDD
 
@@ -616,7 +704,7 @@ In[]: df.collect()   # [Row(name='Alice', age=18),
                      #  Row(name='Alex', age=48)]
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе схемы StructType()}
+\subsection{Создание Spark DataFrame на основе схемы StructType()}
 
 Создание объекта \texttt{DataFrame} на основе схемы
 
@@ -640,7 +728,7 @@ In[]: df.collect()  # [Row(name='Alice', age=18),
                     #  Row(name='Alex', age=48)]                               
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе pandas}
+\subsection{Создание Spark DataFrame на основе pandas}
 
 Создание объекта \texttt{Spark} \texttt{DataFrame} на основе \texttt{pandas} \texttt{DataFrame}
 
@@ -683,7 +771,28 @@ Out[]:
  Row(url='url1', service='tw', summa=59)]
 \end{lstlisting}
 
-\section{Зарегистрировать пользовательскую функцию}
+
+\section{Зарегистрировать пользовательскую функцию в Spark на Scala}
+
+Зарегистрировать пользовательскую функцию для использования в конексте SQL-запросов можно так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+spark.udf.register("power2", (elem: Int) => scala.math.pow(elem, 2))
+\end{lstlistig}
+
+Теперь можно использовать эту функцию внутри SQL-запроса
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.createOrReplaceTempView("test") // регистрируем DataFrame как временное представление
+spark.sql("SELECT power2(counts) FROM test;")
+\end{lstlisting}
+
+
+\section{Зарегистрировать пользовательскую функцию в PySpark}
 
 Зарегистрировать пользовательскую функцию
 
@@ -698,6 +807,111 @@ In[]: from pyspark.sql.types import IntegerType
 In[]: stringLength = spark.udf.register('stringLength', lambda x: len(x), IntegerType())
 In[]: spark.sql("SELECT stringLength('test')").collect()  # [Row(stringLength(test)=4)]
 \end{lstlisting}
+
+
+\section{Соединение объектов DataFrame}
+
+Соединение двух объектов DataFrame/Dataset можно выполнить следующим образом
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import spark.sqlContext.implicits._
+import org.apache.spark.sql.catalyst.plans.{LeftOuter, Inner, RightOuter}
+
+val emp = Seq((1,"Smith",-1,"2018","10","M",3000),
+  (2,"Rose",1,"2010","20","M",4000),
+  (3,"Williams",1,"2010","10","M",1000),
+  (4,"Jones",2,"2005","10","F",2000),
+  (5,"Brown",2,"2010","40","",-1),
+  (6,"Brown",2,"2010","50","",-1)
+)
+val empColumns = Seq("emp_id","name","superior_emp_id","year_joined",
+"emp_dept_id","gender","salary")
+
+val empDF = emp.toDF(empColumns:_*) // один fDataFrame
+empDF.show(false)
+
+val dept = Seq(("Finance",10),
+  ("Marketing",20),
+  ("Sales",30),
+  ("IT",40)
+)
+
+val deptColumns = Seq("dept_name","dept_id")
+val deptDF = dept.toDF(deptColumns:_*) // второй DataFrame
+deptDF.show(false)
+\end{lstlisting}
+
+\emph{Внутренее} соединение по ключам \verb|emp_dept_id| и \verb|dept_id|
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "inner")
+.show(false)
+\end{lstlisting}
+
+\emph{Внешнее} соединение
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// это синонимические конструкции
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "outer").show(false)
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "full").show(false)
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "fullouter").show(false)
+\end{lstlisting}
+
+Аналогично выполняется \emph{левое} и \emph{правое} соединение
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+mpDF.join(deptDF, empDF("emp_dept_id") === deptDF("dept_id"), "left").show
+mpDF.join(deptDF, empDF("emp_dept_id") === deptDF("dept_id"), "right").show
+\end{lstlisting}
+
+Еще возможно выполнить \emph{полулевое} соединение. Этот вариант соедения ведет себя аналогично внутреннему соединению, но возвращает только столбцы из левого объекта DataFrame (столбцы из правого объекта DataFrame игнорируются)
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "leftsemi").show(false)
+\end{lstlisting}
+
+Соединение типа <<left anti>> оставляет только столбцы левого объекта DataFrame и только те строки, которые не совпадаеют с правыми
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.join(deptDF, empDF("emp_dept_id") === deptDF("dept_id"), "leftanti").show
+\end{lstlisting}
+
+Самосоединение выполнятся так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.as("emp1").join(
+  empDF.as("emp2"), $"emp1.superior_emp_id" === $"emp2.emp_id", "inner"
+).select(
+  $"emp1.emp_id",
+  $"emp1.name",
+  $"emp2.emp_id".as("superior_emp_id"),
+  $"emp2.name".as("superior_emp_name")
+).show
+\end{lstlisting}
+
+Разумеется можно выполнить соединение из-под SQL-запроса
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+spark.sql("SELECT * FROM EMP AS e INNER JOIN DEPT AS d ON e.emp_dept_id = d.dept_id").show
+\end{lstlisting}
+
+
 
 \section{Фильтрация и агрегация}
 
