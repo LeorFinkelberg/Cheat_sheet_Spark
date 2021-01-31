@@ -2359,6 +2359,25 @@ spark = pyspark.sql.SparkSession.builder.appName("MyApp") \
 import mmlspark
 \end{lstlisting}
 
+
+\section{Ошибка java.lang.IllegalAccessException}
+
+Ошибка \texttt{java.lang.IllegalAccessException} возникает (по моим наблюдениям), когда в преобразовании приходится обращаться к объекту, который (судя по всему) доступен только на драйвере
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val sortedCol: org.apache.spark.rdd.RDD[(Double, Long)] = ...
+
+val ranksOnly = sortedCol.filter{
+  val ranks = List[Long](...) // во избежание ошибки должен располагаться внутри преобразования
+  elem => ranks.contains(elem._2) // здесь нельзя использовать case!!!
+}
+\end{lstlisting}
+
+
+
+
 \section{Структурный и непрерывный стриминг}
 
 Чем больше интервал пакетирования (размер батча), тем лучше (от нескольких миллисекунд до нескольких минут или даже часов).
