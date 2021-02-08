@@ -205,6 +205,30 @@ libraryDependencies ++= Seq(
 \end{lstlisting}
 
 
+\section{Использование пакетов и библиотек, созданных сообществом разработчиков}
+
+Перечень пакетов Spark, каталогизированный по области применения, можно найти на \url{https://spark-packages.org/}.
+
+Для того чтобы использовать тот или иной пакет в проекте (\verb|spark-submit|) или в сессии (\verb|spark-shell|) можно просто передать  Maven-координаты флагу \verb|--packages|
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+# добавляем пакет Sparkling Water
+spark-shell --packages ai.h2o:sparkling-water-core_2.10:1.4.3
+\end{lstlisting}
+
+Можно добавить зависимость в файл сборки \texttt{build.sbt}
+\begin{lstlisting}[
+title = {\sffamily build.sbt},
+style = bash,
+numbers = none	
+]
+...
+libraryDependencies += "ai.h2o" % "sparkling-water-core_2.10" % "1.4.3"
+\end{lstlisting}
+
+
 
 \section{Начало работы со Spark}
 
