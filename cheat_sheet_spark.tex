@@ -205,6 +205,30 @@ libraryDependencies ++= Seq(
 \end{lstlisting}
 
 
+\section{Использование пакетов и библиотек, созданных сообществом разработчиков}
+
+Перечень пакетов Spark, каталогизированный по области применения, можно найти на \url{https://spark-packages.org/}.
+
+Для того чтобы использовать тот или иной пакет в проекте (\verb|spark-submit|) или в сессии (\verb|spark-shell|) можно просто передать  Maven-координаты флагу \verb|--packages|
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+# добавляем пакет Sparkling Water
+spark-shell --packages ai.h2o:sparkling-water-core_2.10:1.4.3
+\end{lstlisting}
+
+Можно добавить зависимость в файл сборки \texttt{build.sbt}
+\begin{lstlisting}[
+title = {\sffamily build.sbt},
+style = bash,
+numbers = none	
+]
+...
+libraryDependencies += "ai.h2o" % "sparkling-water-core_2.10" % "1.4.3"
+\end{lstlisting}
+
+
 
 \section{Начало работы со Spark}
 
@@ -456,6 +480,121 @@ sbt assembly
 	\item \texttt{cluster} -- драйвер, как и executors, запускается на \emph{кластере}.
 \end{itemize}
 
+\section{Эффективная конфигурация испольнителей}
+
+Подробности в статье \url{https://medium.com/expedia-group-tech/part-3-efficient-executor-configuration-for-apache-spark-b4602929262}.
+
+Первым шагом в определении эффективной конфигурации \emph{исполнителей} (Executor) является выяснение числа \emph{фактических} процессоров на узлах кластера. К примеру, пусть на каждом узле доступны 16 процессоров.
+
+Здесь есть одна терминологическая тонкость. Иногда под процессорами или \emph{виртуальными процессорами} понимают \emph{ядра} процессора. Когда речь идет о кластере виртуальных машин о виртуальных процессорах все-таки удобнее думать как о \emph{ядрах} процессора.
+
+На каждом узле следует зарезервировать один процессор под операционную систему и диспетчер кластера. Таким образом, на каждом узле остается 15 процессоров.
+
+Теперь, когда известно сколько процессоров доступно для использования на каждом рабочем узле, следует определить сколько ядер (cores) мы хотим назначить \emph{каждому исполнителю}.
+
+Итак, у нас в распоряжении 15 ядер на узел, поэтому возможны следующие варианты:
+\begin{enumerate}
+	\item 1 исполнитель, 15 ядер на исполнителя: НЕ ГОДИТСЯ!!! Одноядерные исполнители не эффективны, так как не используют преимущества параллелизма, которые обеспечивают несколько ядер внутри одного исполнителя,
+	
+	\item 3 исполнителя, 5 ядер на исполнителя: 5 ядер на одного исполнителя это оптимальное решение с точки зрения параллельной обработки; кроме того меньшее количество исполнителей на узел требует меньшее количество служебной памяти,
+	
+	\item 5 исполнителей, 3 ядра на исполнитель: неплохо, но лучше 5 ядер и 3 исполнителя,
+	
+	\item 15  исполнителей, 1 ядро на исполнителя: НЕ ГОДИТСЯ! Дело в том, что <<жирные>> исполнители, поддерживающие такое количество ядер, обычно имеют такой большой пул памяти (64 Гб+), что задержки на сборку мусора будут колоссальными.
+\end{enumerate}
+
+Теперь требуется понять сколько памяти следует назначить каждому исполнителю. Для нужно выяснить сколько физической памяти доступно на узле. Пусть, для примера, на узел выделяется 128 Гб памяти.
+
+Однако исполнителями будут доступны не все 128 Гб, так как память нужно выделить под операционную систему и диспетчер кластера. Пусть остается 112 Гб. Теперь нужно решить как распределить эту память по исполнителям.
+
+Решение простое: доступный объем памяти следует равномерно разделить по исполнителям в узле с учетом коэффициента накладных расходов на память (в Spark этот коэффициент принимают равным 1.1), то есть  каждому исполнителю следует выделить $ \dfrac{1}{1.1}\, \dfrac{112}{3} \approx 34$~(Гб).
+
+Оптимальное количество исполнителей должно быть кратным 3 минус один исполнитель, чтобы освободить место под \emph{драйвер} (по умолчанию выделяется 1 ядро).
+
+Обычной практикой для data-инженеров является выделение относительно небольшого размера памяти под драйвер по сравнению с исполнителями. Однако AWS на самом деле рекомендует устанавливать размер памяти вашего драйвера таким же, как и у исполнителей.
+
+По умолчанию количество ядер на драйвер равно одному. Однако, для больших кластеров (более 500 ядер Spark), можно повысить производительность, если количество ядер на драйвер установить в соответствии с количеством ядер на исполнителя. 
+
+Однако не стоит сразу менять дефолтное количество ядер в драйвере. Просто протестируйте это на своих наиболее крупных задачах, чтобы увидеть, ощутите ли вы прирост производительности.
+
+Таким образом, базовая конфигурация исполнителей для узла из 16 ядер и 128 Гб памяти выглядит так
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+...
+--driver-memory 34G \
+--executor-memory 34G \
+--num-executors (3x -1) \
+--executor-cores 5
+\end{lstlisting}
+
+
+
+
+
+\section{Особенности работы инфиксных математических операторов с коллекциями в Python и Scala}
+
+В Python \emph{простой инфиксный} математический оператор (\texttt{+}, \texttt{*} и пр.) всегда создает \emph{новый объект} независимо от того является левый операнд изменяемым объектом или нет.
+
+\emph{Составной инфиксный} оператор (\texttt{+=}, например) изменяет левый операнд на месте, если последний относится к объектам изменяемого типа данных, и создает новый объект, а затем перепривязывает его к переменной, если левый операнд является объектом неизменяемого типа данных.
+
+В Scala добавить элемент в \emph{упорядоченную} коллекцию слева или справа можно так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import scala.collection.mutable.ListBuffer
+
+val lst = List[Int]() // неизменяемый список
+val lstBuf = ListBuffer[Int]() // изменяемый список
+// между добавляемым элементом и оператором + недолжно быть никаких символов кроме пробела
+lst :+ 10 // возвращает новый объект. List(10)
+20 +: lst //возвращает новый объект. List(20)
+20 +: (lst :+ 10) // List(20, 10)
+lstBuf :+ 10 // возвращает новый объект
+\end{lstlisting}
+
+Добавить сразу несколько элементов
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+lst ++ List(10, 20) // возвращает новый объект
+lstBuf ++ List(10, 20) // возвращает новый объект
+lstBuf += 10 // изменяет левый операнд. ListBuffer(10)
+lst += 10 // ОШИБКА!!! List[Int] - неизменяемый объект. В Python новый объект просто перепривязался бы к переменной
+lstBuf ++= List(10, 20) // изменятет левый операнд. ListBuffer(10, 20)
+lst ++= List(10, 20) // ОШИБКА!!!
+\end{lstlisting}
+
+В Python \emph{составной инфиксный оператор} (например, \texttt{+=}) может работать как с \emph{изменяемыми}, так и с \emph{неизменяемыми} операндами слева от себя без каких-либо специальных преобразований (просто в случае изменяемых объектов оператор \texttt{+=} изменяет левый операнд на месте, а в случае неизменяемых объетов создает новый объект и перепривязывает его к переменной).
+
+В Scala составной инфиксный оператор тоже может работать как с объектами \emph{изменяемого} типа данных (например, \texttt{ListBuffer}), так и с объектами \emph{неизменяемого} типа данных (например, \texttt{immutable.Map}), но в последнем случае изменяемые объекты должны быть объявлены как \emph{var-переменные}.
+
+Оператор \texttt{++} в Scala ведет себя также, как метод \texttt{extend()} в Python, т.е. ожидает увидеть объект, поддерживающий протокол итераций (или другими словами коллекцию). Затем эта коллекция распаковывается и элементы добавляются по одному. Но при этом \texttt{++} возвращает \emph{новый} объект, а не изменяет существующий, даже в случае \texttt{ListBuffer}.
+
+Оператор \texttt{+=} в Scala по отношению к \emph{изменеямым} объектам ведет себя также как метод \texttt{append()} в Python и изменяет левый операнд.
+
+Оператор \texttt{++=} в Scala по отношению к \emph{изменяемым} объектам ведет себя также как метод \texttt{extend()} в Python и изменяет левый операнд.
+
+Для добавления одного элемента в неупорядоченную коллекцию (например, во множество) используется оператор \texttt{+}, а для добавления нескольких элементов -- оператор \texttt{++}.
+
+ВАЖНО: массив \texttt{Array} в Scala строго говоря является \emph{изменяемым} объектом \underline{фиксированной} длины, а буферный массив \texttt{ArrayBuffer} -- \emph{изменяемым} объектом \underline{переменной} длины. То есть и в том, и в другом случае можно обращаться к элементам массива и \emph{изменять} их значение.
+
+Пример
+\begin{lstlisting}[
+style = scala,
+numbers = none
+]
+val arr = new Array[Int](3) // Array(0, 0, 0). ВНИМАНИЕ! ключевое слово new
+arr(0) += 10 // Array(10, 0, 0)
+arr(2) += 100 // Array(10, 0, 100)
+arr(1) = -1 // Array(10, -1, 100)
+\end{lstlisting}
+
+
+
 \section{Пример использования группировки и аггрегации на Scala}
 
 Пример подсчета слов в файле
@@ -572,7 +711,95 @@ df[(df["year"] > 2010) & (df["state"] == "AL")][["year", "population"]].sort_val
 df.query("year > 2010 & state == 'AL'")[["year", "population"]].sort_values("year")
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе списка}
+
+\section{Запись объектов Spark DataFrame}
+
+Если все данные хранятся в одном объекте DataFrame, то можно легко задать информацию о секционировании во время записи данных с помощью API класса \texttt{DataFrameWriter}. Функция \texttt{partitionBy} принимает в качестве параметра список столбцов, по которым необходимо секционировать результаты
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// пусть у DataFrame есть категориальный столбец solverType с двумя категориями direct и iterative
+data
+  .write
+  .partitionBy("solverType") // секционирование
+  .format("csv")
+  .save("output")
+\end{lstlisting}
+
+После этой операции в текущей директории будет создана поддиректория \directory{output} следующего содержания
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+$ ls -l output
+-rw-r--r--  1 leor.finkelberg  staff     0B 27 янв 19:47 _SUCCESS
+drwxr-xr-x  6 leor.finkelberg  staff   192B 27 янв 19:47 solverType=direct/
+drwxr-xr-x  4 leor.finkelberg  staff   128B 27 янв 19:47 solverType=iterative/
+$ ls -l output/solverType=direct
+-rw-r--r--  1 leor.finkelberg  staff    11B 27 янв 19:47 part-00001-66f80308-b856-4661-9e8f-d1ea8df84d1a.c000.csv
+-rw-r--r--  1 leor.finkelberg  staff     9B 27 янв 19:47 part-00003-66f80308-b856-4661-9e8f-d1ea8df84d1a.c000.csv
+$ cat output/solverType=direct/part-00001-66f80308-b856-4661-9e8f-d1ea8df84d1a.c000.csv
+Nastran,10
+\end{lstlisting}
+
+\section{Выбор элементов в DataFrame и Dataset}
+
+При выборе элементов коллекции Dataset с помощью метода \texttt{select} без указания типа полей возвращается объект DataFrame
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.select(
+  $"packageName",
+  $"solverType"
+) // org.apache.spark.sql.DataFrame
+\end{lstlisting}
+
+Если же указать тип поля при выборе, то будет возвращен объект Dataset
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.select(
+  $"packageName".as[String],
+  $"solverType".as[String]
+) // org.apache.spark.sql.Dataset[(String, String)]
+\end{lstlisting}
+
+И если выбирать поля из объекта DataFrame методом \texttt{select} без указания типа полей, то будет возвращет объект DataFrame. Если же указать тип полей, то вернется объект Dataset.
+
+К слову, у наборов Dataset отсутствуют простые агрегирующие функции типа \texttt{min}, \texttt{max} и т.п., поэтому задавать такие функции, следует через \texttt{agg}
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.groupBy("solverType").agg(
+  min("counts").as[Int].as("minCounts")
+)
+\end{lstlisting}
+
+
+\section{Создание объектов Spark DataFrame на Scala}
+
+Примеры создания объектов DataFrame на базе различных примитивных структур
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// Обычная коллекция кортежей
+val seqTuples = Seq(
+  ("Nastan", 10, "direct"),
+  ("Ansys", 20, "iterative")
+)
+
+seqTuples.toDF("packageName", "count", "solverType") // org.apache.spark.sql.DataFrame
+\end{lstlisting}
+
+
+\section{Создание объектов Spark DataFrame на Python}
+
+\subsection{Создание Spark DataFrame на основе списка}
 
 Создание объекта \texttt{Spark} \texttt{DataFrame} на основе списка
 
@@ -593,7 +820,7 @@ Out[]:
  Row(package_name='Comsole', solver='direct', price=45000)]
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе объекта RDD}
+\subsection{Создание Spark DataFrame на основе объекта RDD}
 
 Создание объекта \texttt{DataFrame} на основе объекта RDD
 
@@ -616,7 +843,7 @@ In[]: df.collect()   # [Row(name='Alice', age=18),
                      #  Row(name='Alex', age=48)]
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе схемы StructType()}
+\subsection{Создание Spark DataFrame на основе схемы StructType()}
 
 Создание объекта \texttt{DataFrame} на основе схемы
 
@@ -640,7 +867,7 @@ In[]: df.collect()  # [Row(name='Alice', age=18),
                     #  Row(name='Alex', age=48)]                               
 \end{lstlisting}
 
-\section{Создание Spark DataFrame на основе pandas}
+\subsection{Создание Spark DataFrame на основе pandas}
 
 Создание объекта \texttt{Spark} \texttt{DataFrame} на основе \texttt{pandas} \texttt{DataFrame}
 
@@ -683,7 +910,28 @@ Out[]:
  Row(url='url1', service='tw', summa=59)]
 \end{lstlisting}
 
-\section{Зарегистрировать пользовательскую функцию}
+
+\section{Зарегистрировать пользовательскую функцию в Spark на Scala}
+
+Зарегистрировать пользовательскую функцию для использования в конексте SQL-запросов можно так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+spark.udf.register("power2", (elem: Int) => scala.math.pow(elem, 2))
+\end{lstlistig}
+
+Теперь можно использовать эту функцию внутри SQL-запроса
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+df.createOrReplaceTempView("test") // регистрируем DataFrame как временное представление
+spark.sql("SELECT power2(counts) FROM test;")
+\end{lstlisting}
+
+
+\section{Зарегистрировать пользовательскую функцию в PySpark}
 
 Зарегистрировать пользовательскую функцию
 
@@ -698,6 +946,111 @@ In[]: from pyspark.sql.types import IntegerType
 In[]: stringLength = spark.udf.register('stringLength', lambda x: len(x), IntegerType())
 In[]: spark.sql("SELECT stringLength('test')").collect()  # [Row(stringLength(test)=4)]
 \end{lstlisting}
+
+
+\section{Соединение объектов DataFrame}
+
+Соединение двух объектов DataFrame/Dataset можно выполнить следующим образом
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+import spark.sqlContext.implicits._
+import org.apache.spark.sql.catalyst.plans.{LeftOuter, Inner, RightOuter}
+
+val emp = Seq((1,"Smith",-1,"2018","10","M",3000),
+  (2,"Rose",1,"2010","20","M",4000),
+  (3,"Williams",1,"2010","10","M",1000),
+  (4,"Jones",2,"2005","10","F",2000),
+  (5,"Brown",2,"2010","40","",-1),
+  (6,"Brown",2,"2010","50","",-1)
+)
+val empColumns = Seq("emp_id","name","superior_emp_id","year_joined",
+"emp_dept_id","gender","salary")
+
+val empDF = emp.toDF(empColumns:_*) // один fDataFrame
+empDF.show(false)
+
+val dept = Seq(("Finance",10),
+  ("Marketing",20),
+  ("Sales",30),
+  ("IT",40)
+)
+
+val deptColumns = Seq("dept_name","dept_id")
+val deptDF = dept.toDF(deptColumns:_*) // второй DataFrame
+deptDF.show(false)
+\end{lstlisting}
+
+\emph{Внутренее} соединение по ключам \verb|emp_dept_id| и \verb|dept_id|
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "inner")
+.show(false)
+\end{lstlisting}
+
+\emph{Внешнее} соединение
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+// это синонимические конструкции
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "outer").show(false)
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "full").show(false)
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "fullouter").show(false)
+\end{lstlisting}
+
+Аналогично выполняется \emph{левое} и \emph{правое} соединение
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+mpDF.join(deptDF, empDF("emp_dept_id") === deptDF("dept_id"), "left").show
+mpDF.join(deptDF, empDF("emp_dept_id") === deptDF("dept_id"), "right").show
+\end{lstlisting}
+
+Еще возможно выполнить \emph{полулевое} соединение. Этот вариант соедения ведет себя аналогично внутреннему соединению, но возвращает только столбцы из левого объекта DataFrame (столбцы из правого объекта DataFrame игнорируются)
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.join(deptDF,empDF("emp_dept_id") ===  deptDF("dept_id"), "leftsemi").show(false)
+\end{lstlisting}
+
+Соединение типа <<left anti>> оставляет только столбцы левого объекта DataFrame и только те строки, которые не совпадаеют с правыми
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.join(deptDF, empDF("emp_dept_id") === deptDF("dept_id"), "leftanti").show
+\end{lstlisting}
+
+Самосоединение выполнятся так
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+empDF.as("emp1").join(
+  empDF.as("emp2"), $"emp1.superior_emp_id" === $"emp2.emp_id", "inner"
+).select(
+  $"emp1.emp_id",
+  $"emp1.name",
+  $"emp2.emp_id".as("superior_emp_id"),
+  $"emp2.name".as("superior_emp_name")
+).show
+\end{lstlisting}
+
+Разумеется можно выполнить соединение из-под SQL-запроса
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+spark.sql("SELECT * FROM EMP AS e INNER JOIN DEPT AS d ON e.emp_dept_id = d.dept_id").show
+\end{lstlisting}
+
+
 
 \section{Фильтрация и агрегация}
 
@@ -2083,6 +2436,25 @@ spark = pyspark.sql.SparkSession.builder.appName("MyApp") \
     .getOrCreate()
 import mmlspark
 \end{lstlisting}
+
+
+\section{Ошибка java.lang.IllegalAccessException}
+
+Ошибка \texttt{java.lang.IllegalAccessException} возникает (по моим наблюдениям), когда в преобразовании приходится обращаться к объекту, который (судя по всему) доступен только на драйвере
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val sortedCol: org.apache.spark.rdd.RDD[(Double, Long)] = ...
+
+val ranksOnly = sortedCol.filter{
+  val ranks = List[Long](...) // во избежание ошибки должен располагаться внутри преобразования
+  elem => ranks.contains(elem._2) // здесь нельзя использовать case!!!
+}
+\end{lstlisting}
+
+
+
 
 \section{Структурный и непрерывный стриминг}
 
