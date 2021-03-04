@@ -2053,6 +2053,9 @@ df.groupBy("department").agg(
 df.groupBy("state").agg(
   count("salary").as("countSalary")
 ).show
+
+// отфильтровать строки, в которых поле state имеет значение AL, а поле year > 2010; выполнить группировку по полю ages и подсчитать сумму в каждой группе по полю population
+dff.where($"state" === "AL" && $"year" > 2010).groupBy($"ages").agg(sum($"population")).show
 \end{lstlisting}
 
 
