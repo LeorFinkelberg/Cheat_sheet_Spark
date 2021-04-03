@@ -31,6 +31,19 @@
 
 Официальная документация по \texttt{sbt} \url{https://www.scala-sbt.org/1.x/docs/sbt-by-example.html}.
 
+\section{Установка Apache Spark}
+
+Скачать tar-файл можно с официального сайта \url{http://spark.apache.org/downloads.html}. Затем
+\begin{lstlisting}[
+style = bash,
+numbers = none	
+]
+$ tar -xvzf spark-3.0.1-bin-hadoop3.2.tgz
+$ vim ~/.zshrc
+export SPARK_HOME=~/spark/spark-3.0.1-bin-hadoop3.2
+alias spark-shell="${SPARK_HOME}/bin/spark-shell"
+$ source ~/.zshrc
+\end{lstlisting}
 
 \section{Общие сведения}
 
