@@ -25,6 +25,8 @@
 
 Очень крутая книга \href{https://the-internals-of-spark-sql.readthedocs.io/connector/SupportsRead/}{\textit{The Internals of Spark SQL}} по внутреннему устройству Spark от Jacek Laskowski. GitHub-репозиторий \href{https://github.com/jaceklaskowski/mastering-spark-sql-book}{книги}.
 
+Полезная книга по best-practices и настройке Spark \href{https://umbertogriffo.gitbook.io/apache-spark-best-practices-and-tuning/rdd/treereduce_and_treeaggregate_demystified}{\textit{Apache Spark - Best Practices and Tuning}} от Umberto Griffo.
+
 Официальная документация по ML \url{https://spark.apache.org/docs/1.2.2/ml-guide.html}.
 
 Официальная документация по MLlib \url{https://spark.apache.org/docs/latest/ml-guide.html}.
@@ -222,6 +224,31 @@ libraryDependencies ++= Seq(
 \emph{Хеш-соединение с трансляцией} (еще называют broadcast) состоит в том, что копия маленькой таблицы рассылается всем исполнителям запроса. А далее большая таблица делится на части, и каждый из исполнителей строит свою часть соединения. Эта техника применяется тогда, когда одна из таблиц маленькая, а другая большая.
 
 В случае Hive и Spark прелесть этого метода состоит в том, что мы можем переслать на каждый из узлов не только таблицу, но вообще любую структуру данных (любую коллекцию, ассоциативный массив, битовую карту и т.д.). А исполнители могут это применять по своему усмотрению. Например, если требуется построить соединение из двух Dataset, то можно применить broadcast к одному из них. Или можно прочитать маленький Dataset в память, построить на его базе любую оптимальную структуру (фильтр Блума, к примеру), а затем разослать эту структуру исполнителям, которые применят ее не только для построения JOIN, но для чего угодно (фильтрации, например). 
+
+\section{Трансляционные (широковещательные) переменные в Spark}
+
+Трансляционные (широковещательные/broadcast) переменные пишутся на драйвере, а читаются на исполнителях. Если есть какой-то большой массив, с которым нужно работать исполнителям, то этот массив будет направлен \emph{каждому узлу} Spark с замыканиями. \emph{Замыкание} это переменные и методы, которые должны быть видны исполнителю для того чтобы он мог выполнить свою работу. 
+
+К примеру, если кластер состоит из 10 узлов со 100 партициями (по 10 партиций на каждый узел), то этот большой массив будет распределен как минимум 100 раз (по 10 раз на каждый узел). Если же использовать широковещательную переменную (\pic{fig:broadcast}), то массив будет передан на \emph{каждый \underline{узел}} \emph{один раз} (с использованием эффективного протокола p2p).
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[scale=0.65]{figures/broadcast.png}
+	\caption{ Широковещательная переменная и кластер Spark }\label{fig:broadcast}
+\end{figure}
+
+Пример
+\begin{lstlisting}[
+style = scala,
+numbers = none	
+]
+val array: Array[Int] = ??? // какой-то большой массив
+val broadcast = sc.broadcast(array)
+
+val rdd: RDD[Int] = ??? // какой-то еще массив
+rdd.map(i => broadcast.value.contains(i))
+\end{lstlisting}
+
 
 \section{Фильтр Блума}
 
